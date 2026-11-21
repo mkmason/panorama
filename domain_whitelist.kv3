@@ -14,5 +14,17 @@
 
 		// Added for the main-menu background selector's anime-image search (nekos.best — no auth, PNG images)
 		"nekos.best",
+
+		// Added for the Affirmations HUD element (no auth; returns { affirmation })
+		"www.affirmations.dev",
+		"affirmations.dev",
+
+		// Added for the Jokes HUD element (no auth; returns { setup, punchline })
+		"official-joke-api.appspot.com",
+		// Fallback joke source for when official-joke-api is down (returns { setup, delivery })
+		"v2.jokeapi.dev",
+
+		// Added for the Advice HUD element (no auth; returns { slip: { advice } })
+		"api.adviceslip.com",
 	]
 }

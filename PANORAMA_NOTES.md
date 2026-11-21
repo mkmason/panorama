@@ -860,6 +860,44 @@ seconds). That's what's persisted.
   **"Updated Xm ago · Rescan for a full refresh"** (`agoText(dataTimestamp)`); `dataTimestamp` is bumped ONLY by
   a full scan (never by incremental or popup write‑back), so the staleness reading is honest.
 
+### 6m. Web‑text HUD elements — Affirmations + Jokes + Advice — `hud/{affirmations,jokes,advice}.{ts,xml,scss}`
+Three pure‑Panorama HUD elements (same no‑C++ `<Frame>` pattern as the Segment Timer §6g) that **fetch JSON from
+a public no‑auth API on a customizer‑controlled timer and post the text into HUD labels**. Built as the general
+answer to "poll a web endpoint every X seconds into a text HUD element", so the fetch/loop/customizer plumbing is
+identical between them — copy one to add a fourth (change only the URL, the response field(s), and the labels).
+- **Affirmations** (`#Affirmations`, class `AffirmationsHandler`): GET `https://www.affirmations.dev` → `{ affirmation }`,
+  one `.affirmations__text` label.
+- **Jokes** (`#Jokes`, class `JokesHandler`): GET `https://official-joke-api.appspot.com/random_joke` →
+  `{ setup, punchline }`, two labels (`.jokes__setup` white + `.jokes__punchline` gold/bold) with independent colours.
+- **Advice** (`#Advice`, class `AdviceHandler`): GET `https://api.adviceslip.com/advice` → `{ slip: { advice } }`
+  (nested — read `slip.advice`), one `.advice__text` label. ⚠️ The API **caches per‑IP for ~2s**, so back‑to‑back
+  calls return the same slip; a cache‑buster query (`?t=<Date.now()>`) is appended to force a fresh one each tick.
+- **Fetch loop** (a plain panel gets no `HudProcessInput` — §4): a self‑scheduled `$.Schedule` loop with a
+  `fetchGen` **generation guard** so re‑arming cancels the previously‑scheduled tick (only the latest `fetchGen`
+  survives), and an `inFlight` flag so a slow request never stacks another. The first tick is scheduled with delay
+  0 so text appears as soon as the element is enabled. The loop reads `this.intervalSeconds` each cycle.
+- **Enabled‑gating — skip the web request while the component is toggled OFF.** The customizer's on/off toggle sets
+  `panel.enabled` (`customizer.ts` `this.panel.enabled = enabled`), and a disabled HUD component is hidden (proven
+  by the `enabled = false` defaults of ShowPos/StrafeTrainer/etc.). So the loop only fetches when
+  `this.panels.root.enabled` — no point hitting an external service for a hidden panel; it comes alive within one
+  interval after the user enables it. (`enabled` is a real gettable `boolean` on the panel — `panels.d.ts`.)
+- **Interval = the "time" customization**, a JS‑only style: `intervalSeconds` `NUMBER_ENTRY` with **only a
+  `callbackFunc`** (no `targetPanel`/`styleProperty`) that updates the field AND calls `scheduleLoop(0)` to re‑arm,
+  so a shortened interval takes effect immediately instead of after the old (possibly long) wait. `min:1` keeps
+  multi‑digit entry usable (NumberEntry clamps to min per keystroke — §4). Default **10s**. Like any non‑NONE style
+  it STILL needs a `hud_default.kv3` default.
+- **Colour + size customization** are stock: `COLOR_PICKER` (+ `getTextShadowFast` for the shadow) and px
+  `NUMBER_ENTRY` targeting the label(s); `backgroundColor` on the root (no `targetPanel`). `resizeX: true` gives a
+  drag‑resizable width and the labels are `width:100%`, so long affirmations/jokes **wrap** instead of overflowing.
+- **Shared JSON helper** `common/parse-leading-json.ts` — `parseLeadingJson(txt)` handles the AsyncWebRequest
+  trailing‑NUL quirk (§3) by brace/bracket‑counting the leading top‑level value; returns `null` on failure (never
+  throws). Factored out of the Stats page's inline copy; used by both elements.
+- **All default `enabled = false`** (toggle on in the customizer) and sit stacked at the same offset (Affirmations,
+  then Jokes, then Advice). **Whitelist:** `www.affirmations.dev` / `affirmations.dev` / `official-joke-api.appspot.com`
+  / `api.adviceslip.com` added to `domain_whitelist.kv3` — **startup‑only, so a full game RESTART is needed** before
+  the fetches work (until then `AsyncWebRequest` throws synchronously — caught, so it just fails quietly and retries).
+  The new `hud_default.kv3` blocks (`Affirmations`, `Jokes`, `Advice`) likewise need a restart, not just `panorama_reload`.
+
 ---
 
 ## 7. Gotchas cheat‑sheet
@@ -883,6 +921,11 @@ seconds). That's what's persisted.
 - `NumberEntry` clamps to `min` per keystroke → use `min:1`, clamp in callback.
 - **A new HUD customizer component needs NO C++** — any `<Panel>` with an id present in `hud_default.kv3`
   works (customizer positions/sizes/enables it in JS). Add it via a `<Frame>` in `hud.xml`. See §4 / §6g.
+- **Polling a web API into a text HUD element** (Affirmations/Jokes/Advice, §6m): self‑scheduled fetch loop with a
+  `fetchGen` guard (re‑arm cancels the old tick) + `inFlight`; make the interval a `NUMBER_ENTRY` with a
+  `callbackFunc` (no CSS prop) that re‑arms; **gate the fetch on `panel.enabled`** so a toggled‑off element makes no
+  requests; parse with the shared `common/parse-leading-json.ts` (trailing‑NUL, §3); whitelist the host + add the
+  kv3 block (both startup‑only → restart).
 - Custom HUD components: plain panels (and `MomHudStrafeSync`) don't fire `HudProcessInput` → self‑schedule updates.
 - `MomHudStrafeSync` also **self‑hides** unless `mom_hud_strafesync_draw` is `1` (ships as 0) — C++ forces
   the panel invisible even while the JS loop runs/logs. Force the convar on in the ctor (see §6c).
@@ -913,11 +956,12 @@ seconds). That's what's persisted.
 ## 8. Where things live
 ```
 panorama/
-  layout/hud/{strafe-trainer,strafe-sync,segment-timer,zone-debug,hud}.xml   (segment-timer + zone-debug = pure-JS HUD frames, §6g/§6j)
+  layout/hud/{strafe-trainer,strafe-sync,segment-timer,zone-debug,affirmations,jokes,advice,hud}.xml   (segment-timer/zone-debug/affirmations/jokes/advice = pure-JS HUD frames, §6g/§6j/§6m)
   layout/pages/{stats/stats,main-menu/main-menu}.xml
   layout/pages/map-selector/css-map-selector.xml        (CS:S map selector — §6e)
   layout/pages/lobby-list/css-lobby-list.xml            (CS:S lobby browser — §6f)
-  scripts/hud/{strafe-trainer,strafe-sync,segment-timer,zone-debug}.ts   (zone-debug = zone render/collision research harness, §6j)
+  scripts/hud/{strafe-trainer,strafe-sync,segment-timer,zone-debug,affirmations,jokes,advice}.ts   (affirmations/jokes/advice = web-text HUD elements, §6m)
+  scripts/common/parse-leading-json.ts (shared NUL-tolerant JSON parse for AsyncWebRequest — §3/§6m)
   scripts/pages/{stats/stats,main-menu/main-menu}.ts
   scripts/pages/map-selector/css-map-selector.ts        (CS:S map selector — §6e)
   scripts/pages/lobby-list/css-lobby-list.ts            (CS:S lobby browser — §6f)
@@ -931,7 +975,7 @@ panorama/
   scripts/common/web/enums/*        (Gamemode, Style, LeaderboardType, TrackType, MapStatus, …)
   scripts/types-mom/{apis,panels}.d.ts   (in-game API + panel types)
   scripts/types/shared/panels.d.ts       (UICanvas, base panel props)
-  styles/pages/main-menu.scss, styles/hud/{strafe-trainer,strafe-sync,segment-timer,zone-debug}.scss, styles/config.scss
+  styles/pages/main-menu.scss, styles/hud/{strafe-trainer,strafe-sync,segment-timer,zone-debug,affirmations,jokes,advice}.scss, styles/config.scss
   styles/pages/map-selector/css-map-selector.scss       (CS:S map selector — §6e; in _index.scss)
   styles/pages/lobby-list/css-lobby-list.scss           (CS:S lobby browser — §6f; own _index.scss)
   images/backgrounds/background01.dds, images/game-logos/css.png

@@ -1,0 +1,20 @@
+<root>
+	<styles>
+		<include src="file://{resources}/styles/main.scss" />
+	</styles>
+
+	<scripts>
+		<include type="module" src="file://{scripts}/hud/affirmations.ts" />
+	</scripts>
+
+	<!--
+		Topmost panel has NO id (loader rule) and fills the frame so the customizer can position the
+		#Affirmations child anywhere on screen via absolute offset. Same pure-JS HUD pattern as the
+		Segment Timer (PANORAMA_NOTES 6g).
+	-->
+	<Panel class="affirmations-root" hittest="false" hittestchildren="false">
+		<Panel id="Affirmations" class="affirmations" enabled="false">
+			<Label id="AffirmationsText" class="affirmations__text" text="{s:affirmation}" />
+		</Panel>
+	</Panel>
+</root>

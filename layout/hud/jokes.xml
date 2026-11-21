@@ -1,0 +1,21 @@
+<root>
+	<styles>
+		<include src="file://{resources}/styles/main.scss" />
+	</styles>
+
+	<scripts>
+		<include type="module" src="file://{scripts}/hud/jokes.ts" />
+	</scripts>
+
+	<!--
+		Topmost panel has NO id (loader rule) and fills the frame so the customizer can position the #Jokes
+		child anywhere on screen via absolute offset. Same pure-JS HUD pattern as Affirmations / the Segment
+		Timer (PANORAMA_NOTES 6g).
+	-->
+	<Panel class="jokes-root" hittest="false" hittestchildren="false">
+		<Panel id="Jokes" class="jokes" enabled="false">
+			<Label id="JokesSetup" class="jokes__setup" text="{s:joke_setup}" />
+			<Label id="JokesPunchline" class="jokes__punchline" text="{s:joke_punchline}" />
+		</Panel>
+	</Panel>
+</root>

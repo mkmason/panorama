@@ -1,0 +1,20 @@
+<root>
+	<styles>
+		<include src="file://{resources}/styles/main.scss" />
+	</styles>
+
+	<scripts>
+		<include type="module" src="file://{scripts}/hud/advice.ts" />
+	</scripts>
+
+	<!--
+		Topmost panel has NO id (loader rule) and fills the frame so the customizer can position the #Advice
+		child anywhere on screen via absolute offset. Same pure-JS HUD pattern as Affirmations / Jokes / the
+		Segment Timer (PANORAMA_NOTES 6g / 6m).
+	-->
+	<Panel class="advice-root" hittest="false" hittestchildren="false">
+		<Panel id="Advice" class="advice" enabled="false">
+			<Label id="AdviceText" class="advice__text" text="{s:advice}" />
+		</Panel>
+	</Panel>
+</root>

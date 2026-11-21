@@ -1,0 +1,31 @@
+@use '../config' as *;
+
+// Full-screen, transparent containers so the customizer can absolutely-position the text box.
+// (The <Frame> in hud.xml carries .advice-frame; the layout root carries .advice-root.)
+.advice-frame,
+.advice-root {
+	width: 100%;
+	height: 100%;
+}
+
+// The positioned box. Width comes from the customizer (resizeX); height fits the wrapped text.
+.advice {
+	flow-children: down;
+
+	// Pure-Panorama panel: the HUD customizer toggles it via panel.enabled, which (unlike the C++ HUD
+	// panels) does nothing visually on its own - so collapse it while disabled.
+	&:disabled {
+		visibility: collapse;
+	}
+
+	// The advice text. font-size / color are overridden by the customizer dynamicStyles. Filling the
+	// customizer-set width lets long advice wrap instead of overflowing the screen.
+	&__text {
+		width: 100%;
+		font-family: $font-primary;
+		font-size: 24px;
+		color: rgba(255, 255, 255, 1);
+		text-shadow: 0px 1px 1.5px 1 rgba(0, 0, 0, 0.9);
+		horizontal-align: left;
+	}
+}
