@@ -263,6 +263,11 @@
 			</BaseBlurTarget>
 		</Panel>
 		
+		<!-- Lobby voice activity, the same panel the HUD shows in-game -->
+		<Panel class="mainmenu__voice" hittest="false" hittestchildren="false">
+			<MomentumVoice />
+		</Panel>
+
 		<Panel id="LegalConsent" class="legal hidden" visible="false" />
 
 		<!-- Background selector overlay: pick a background by file name (Panorama can't list folders).
