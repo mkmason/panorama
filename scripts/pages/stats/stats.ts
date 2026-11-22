@@ -8,7 +8,9 @@ import { MapStatus } from 'common/web/enums/map-status.enum';
 import { GamemodeDefaultUIStyle, GamemodeStyles } from 'common/web/maps/gamemode-styles.map';
 import { GamemodeInfo } from 'common/gamemode';
 import { getTrack, getUserMapDataTrack } from 'common/leaderboard';
-import { handlePlayMap } from 'common/maps';
+import { handlePlayMap, MapUserCompletions } from 'common/maps';
+import { CompletionGroup } from 'common/web/enums/completion-group.enum';
+import { RANK_GROUP_COUNT, getCompletionGroup, getRankGroupEnds } from 'common/web/consts/rank-groups.const';
 
 type RankFilter = 'ranked' | 'unranked' | 'both';
 
@@ -98,20 +100,12 @@ const EMPTY_RANK: RankResult = {
 	groups: [0, 0, 0, 0, 0, 0]
 };
 
-// Ranking ladder, best → worst: WR (rank 1) → Top 10 (ranks 2–10) → G1 … G6 → No group. WR and Top 10 are
-// their own tiers ABOVE the numeric groups: since every G1 threshold is ≥ 20, a rank ≤ 10 would otherwise
-// always land in G1, so those maps are pulled out and marked WR / Top 10 instead (per-map and in the strip).
-// A map's group (rank > 10) comes from your rank `r` on its board of size `N`: you qualify for group i if
-// `r <= max(N * pct + 10, floor)`. The floor keeps small boards fair. Thresholds nest (G1 tightest), so the
-// first that qualifies, scanning G1→G6, is your best group.
-const GROUP_DEFS: { pct: number; floor: number }[] = [
-	{ pct: 0.02, floor: 20 }, // G1 = max(top 2% + 10, top 20)
-	{ pct: 0.04, floor: 35 }, // G2 = max(top 4% + 10, top 35)
-	{ pct: 0.08, floor: 60 }, // G3 = max(top 8% + 10, top 60)
-	{ pct: 0.16, floor: 100 }, // G4 = max(top 16% + 10, top 100)
-	{ pct: 0.33, floor: 150 }, // G5 = max(top 33% + 10, top 150)
-	{ pct: 0.66, floor: 225 } // G6 = max(top 66% + 10, top 225)
-];
+// Ranking ladder, best → worst: WR (rank 1) → Top 10 (ranks 2–10) → G1 … G6 → No group. A map's group
+// (rank > 10) comes from your rank on its board of size N via the website's official formula
+// (getRankGroupEnds / getCompletionGroup): G1 ends at max(15, 2% of N + 10), G2..G6 step geometrically up to
+// the last grouped rank max(100, 67% of N); ranks past that have no group. Small boards can leave low groups empty.
+// Groups use the website's official "octave ladder" (common/web/consts/rank-groups.const) so they match the
+// in-game leaderboards / track selector and the website exactly.
 // WR = gold, Top 10 = teal (matching the tiles above); G1 → G6 a warm-to-cool gradient below them.
 const RANK_WR_COLOR = '#f2c14e';
 const RANK_T10_COLOR = '#6fe0d0';
@@ -169,6 +163,31 @@ let forceFullScan = false;
 // their runs — lets the incremental refresh detect which of their maps changed (local users read this
 // from the local map cache instead, no fetch). Reset on each new search.
 let remotePbTimes: Record<string, number> = {};
+
+// Local-player PB sync. The game's map cache (userData.tracks) sometimes lacks completions until a map is
+// clicked in the map selector, so the local player's PBs are also pulled from the website: they count as
+// completed here regardless, and the missing ones are pushed back into the game's cache via
+// MapCacheAPI.RefreshUserPersonalBests (what selecting a map effectively does), fixing the map selector too.
+// `localApiDone` = completed keys "mapID|gm|tt|tn|style" per the website; null until the first sync lands.
+let localApiDone: Set<string> | null = null;
+let localApiPbTimes: Record<string, number> = {}; // `mapID|gm|style` → main-track PB time, per the website
+let localSyncBusy = false;
+let localSyncedThisSession = false;
+// Pending RefreshUserPersonalBests calls, keyed perMapKey, resolved by the MapCache_CompletionsUpdate they fire.
+const pbWaiters = new Map<string, () => void>();
+// Throttle for the cache repair: concurrent RefreshUserPersonalBests calls, and how long to wait for each one's
+// completions event (it never fires if the game already fetched that map this session).
+const PB_REPAIR_CONCURRENCY = 6;
+const PB_REPAIR_TIMEOUT = 5;
+
+interface PbRun {
+	mapID: number;
+	gamemode: Gamemode;
+	trackType: TrackType;
+	trackNum: number;
+	style: Style;
+	time: number | null;
+}
 // A PB whose time moved by more than this (seconds) is treated as changed by the incremental refresh.
 // Generous so tiny float differences between the local-cache time and the API time don't requery the
 // whole set every open (which would defeat the cache); genuine rank-moving improvements are far larger,
@@ -179,7 +198,7 @@ const PB_EPS = 0.05;
 // re-opening is instant. The completion count comes from the LOCAL map cache (no HTTP) and the rank scan
 // only pulled `take=1` (WR) + your own rank — neither has the full board — so these are on-demand: one
 // `take=10` call for the top 10, plus one `skip=cutoff&take=1` call per group cutoff (the last person in
-// each group G1..G6). Cutoff RANKS are computed from the board size with the same thresholds as `bestGroup`,
+// each group G1..G6). Cutoff RANKS are computed from the board size with the same official formula as `bestGroup`,
 // so only that one row per group is fetched. The board is player-independent, so it survives a viewed-user
 // change; cleared only on rescan.
 interface Top10Row {
@@ -276,6 +295,12 @@ class StatsHandler {
 		// Leaving the page (incl. Esc, which closes the whole page) must collapse the popup, otherwise its
 		// visibility would persist and it'd reappear over the page the next time Stats opens.
 		$.RegisterForUnhandledEvent('MainMenuPageHidden', () => this.closeMapLeaderboard());
+		// Live updates: keep the rank cache current as PBs land, instead of waiting for the next open's
+		// incremental refresh. Same events the map selector / tab menu / leaderboards use.
+		$.RegisterForUnhandledEvent('MapCache_CompletionsUpdate', (c) => this.onCompletionsUpdate(c));
+		$.RegisterForUnhandledEvent('EndOfRun_Result_RunUpload', (uploaded) => {
+			if (uploaded) this.onRunUploaded();
+		});
 	}
 
 	// Called from the page root's onload (fires once the page is actually shown, unlike the
@@ -292,6 +317,7 @@ class StatsHandler {
 		mapLbCache = {}; // boards may have changed — drop the cached top-10s / cutoffs so they refetch
 		yourStandingCache = {}; // and the cached "vs You" standings
 		forceFullScan = true; // the whole point of Rescan: the accurate-but-expensive path, not the cache
+		localSyncedThisSession = false; // re-check the game cache against the website's PBs too
 		this.scan();
 	}
 
@@ -565,10 +591,11 @@ class StatsHandler {
 			return t == null ? null : t;
 		}
 		const userData = map.userData;
-		if (!userData) return null;
 		const trackStyle = style === Style.PRO || style === Style.TELEPORT ? 0 : style;
-		const tr = getUserMapDataTrack(userData, gm, TrackType.MAIN, 1, trackStyle);
-		return tr?.completed ? (tr.time ?? null) : null;
+		const tr = userData ? getUserMapDataTrack(userData, gm, TrackType.MAIN, 1, trackStyle) : null;
+		if (tr?.completed) return tr.time ?? null;
+		// Not in the game's cache (see localApiDone) — fall back to the website's PB time.
+		return localApiPbTimes[this.perMapKey(map.staticData.id, gm, style)] ?? null;
 	}
 
 	/** Completed maps to re-check on an incremental refresh, deduped by perMapKey, across every mode's
@@ -677,27 +704,51 @@ class StatsHandler {
 	 *  captures each main-track PB time into `remotePbTimes` so the incremental refresh can tell which of
 	 *  the user's maps changed since their cache was written (local users read this from the local cache). */
 	async fetchUserDone(uid: number, gen: number): Promise<Set<string>> {
-		const done = new Set<string>();
 		remotePbTimes = {}; // fresh for this user
+		const runs =
+			(await this.fetchPbRuns(
+				uid,
+				() => gen !== userGen,
+				(n) => this.setUserStatus(`Loading runs… ${n}`)
+			)) ?? [];
+		const done = new Set<string>();
+		for (const r of runs) {
+			done.add(this.doneKey(r.mapID, r.gamemode, r.trackType, r.trackNum, r.style));
+			// Main-track PB time, keyed like perMapRank (the rank data is main-track only).
+			if (r.trackType === TrackType.MAIN && r.trackNum === 1 && r.time != null)
+				remotePbTimes[this.perMapKey(r.mapID, r.gamemode, r.style)] = r.time;
+		}
+		return done;
+	}
+
+	/** Every PB run of a user from the website (paginated, 100 per request). `stale()` aborts early (returns
+	 *  what was gathered); null = the first page failed outright, so the result can't be trusted at all. */
+	async fetchPbRuns(uid: number, stale: () => boolean, onProgress?: (count: number) => void): Promise<PbRun[] | null> {
+		const runs: PbRun[] = [];
 		const take = 100;
 		let skip = 0;
 		for (let page = 0; page < 100; page++) {
 			// max 100 pages = 10k PBs (safety ceiling)
 			const j = await this.fetchJson(`${API}/v1/runs?userID=${uid}&isPB=true&take=${take}&skip=${skip}`);
-			if (gen !== userGen) break; // superseded — stop fetching
+			if (stale()) break; // superseded — stop fetching
+			if (j == null && page === 0) return null;
 			const data: any[] = j?.data ?? [];
 			for (const r of data) {
 				if (r?.mapID == null) continue;
-				done.add(this.doneKey(r.mapID, r.gamemode, r.trackType, r.trackNum, r.style));
-				// Main-track PB time, keyed like perMapRank (the rank data is main-track only).
-				if (r.trackType === TrackType.MAIN && r.trackNum === 1 && r.time != null)
-					remotePbTimes[this.perMapKey(r.mapID, r.gamemode, r.style)] = r.time;
+				runs.push({
+					mapID: r.mapID,
+					gamemode: r.gamemode,
+					trackType: r.trackType,
+					trackNum: r.trackNum,
+					style: r.style,
+					time: r.time ?? null
+				});
 			}
-			if (gen === userGen) this.setUserStatus(`Loading runs… ${done.size}`);
+			onProgress?.(runs.length);
 			if (data.length < take) break; // last page
 			skip += take;
 		}
-		return done;
+		return runs;
 	}
 
 	//#endregion
@@ -807,6 +858,8 @@ class StatsHandler {
 		// improved PBs. On the uncached path, enqueueAllModes IS the full scan.
 		this.enqueueAllModes();
 		if (hadCache) this.startIncrementalRefresh();
+		// Once per session: catch PBs the game's cache is missing (see syncLocalPbs).
+		if (!viewUser && !localSyncedThisSession) this.syncLocalPbs();
 	}
 
 	setRank(f: RankFilter) {
@@ -1438,20 +1491,18 @@ class StatsHandler {
 		return this.lbRowFromEntry(j.data[0]);
 	}
 
-	/** Ranks of the last person in each group G1..G6 for a board of `total`, matching `bestGroup`'s thresholds
-	 *  (`rank ≤ max(total·pct + 10, floor)`). Groups sit below the Top 10; empty groups (small boards) are
-	 *  skipped and every cutoff is capped at the board size. */
+	/** Ranks of the last person in each group G1..G6 for a board of `total`, from the official group ends.
+	 *  Groups sit below the Top 10; empty groups (small boards, where an end repeats the previous one) are
+	 *  skipped. Ends never exceed the board size. */
 	computeGroupCutoffs(total: number): { group: number; rank: number }[] {
 		const out: { group: number; rank: number }[] = [];
 		let prev = 10; // ranks ≤ 10 are WR / Top 10, not a group
-		for (let i = 0; i < GROUP_DEFS.length; i++) {
-			const threshold = Math.floor(Math.max(total * GROUP_DEFS[i].pct + 10, GROUP_DEFS[i].floor));
-			const cutoff = Math.min(threshold, total);
-			if (cutoff > prev) {
-				out.push({ group: i + 1, rank: cutoff });
-				prev = cutoff;
+		getRankGroupEnds(total).forEach((end, i) => {
+			if (end > prev) {
+				out.push({ group: i + 1, rank: end });
+				prev = end;
 			}
-		}
+		});
 		return out;
 	}
 
@@ -1579,18 +1630,264 @@ class StatsHandler {
 			total: entry.total > 0 ? entry.total : null,
 			wrTime: entry.rows[0]?.time ?? null
 		};
+		this.applyPerMapUpdate(gm, style, key, next);
+	}
+
+	/** Write one map's rank data into perMapRank, then refresh its tier row, the affected ladder aggregates
+	 *  and the persisted cache. No-op if nothing changed. Returns whether anything was written. */
+	applyPerMapUpdate(gm: Gamemode, style: Style, key: string, next: PerMapRank): boolean {
 		const prev = perMapRank[key];
 		if (prev && prev.rank === next.rank && prev.time === next.time && prev.total === next.total && prev.wrTime === next.wrTime)
-			return; // unchanged — nothing to recompute or persist
+			return false; // unchanged — nothing to recompute or persist
 		perMapRank[key] = next;
-		this.updateTierRankRow(key); // reflect it in the tier list behind the popup, if shown
+		this.updateTierRankRow(key); // reflect it in the tier list, if shown
 		// The map belongs to whichever of ranked/unranked its board is — recompute both so the ladder updates.
 		rankResults[this.rankKey(gm, style, 'ranked')] = this.recomputeRankResult(gm, style, 'ranked');
 		rankResults[this.rankKey(gm, style, 'unranked')] = this.recomputeRankResult(gm, style, 'unranked');
 		if (curRankBody && curRankBody.IsValid())
 			this.renderRankResults(curRankBody, this.resultFor(selectedMode as Gamemode, selectedStyle, rankFilter));
 		this.saveRankCache(); // patch persists under the existing full-scan timestamp
+		return true;
 	}
+
+	//#region live refresh (new PBs / uploads)
+
+	/** Whether live refreshes may touch the rank cache: only for the local player (completions events and
+	 *  uploads are always theirs), and only once the page has built (so perMapRank holds the loaded cache —
+	 *  writing before that would persist a near-empty cache over the real one). */
+	canLiveRefresh(): boolean {
+		return viewUser == null && scanCache != null && !scanning;
+	}
+
+	/** Re-read one map from the game's map cache into scanCache, so completion state (isDone / PB time)
+	 *  reflects a run that just finished. Returns whether the map's completion for (gm, style) flipped. */
+	refreshScanCacheEntry(mapID: number, gm: Gamemode, style: Style): boolean {
+		if (!scanCache) return false;
+		const idx = scanCache.findIndex((m) => m.staticData.id === mapID);
+		if (idx === -1) return false;
+		let fresh: MapCacheAPI.MapData | null = null;
+		try {
+			fresh = MapCacheAPI.GetMapData(mapID);
+		} catch {
+			fresh = null;
+		}
+		if (!fresh) return false;
+		const wasDone = this.isDone(scanCache[idx], gm, style);
+		scanCache[idx] = fresh;
+		return wasDone !== this.isDone(fresh, gm, style);
+	}
+
+	/** After a map's completion state changed, redraw the completion cards (counts / tier bars) if shown. */
+	rerenderIfShown() {
+		if (leftCard && leftCard.IsValid()) this.renderContent();
+	}
+
+	/** The game patched / refreshed a map's completions (new PB from the run poster, or a map selector / tab
+	 *  menu refresh). Its main track carries the local player's rank + board size, so fold that straight into
+	 *  the rank cache — same numbers the map selector and tab menu show, no extra request. */
+	onCompletionsUpdate(c: MapUserCompletions) {
+		if (c?.mapID) pbWaiters.get(this.perMapKey(c.mapID, c.gamemode, c.style))?.(); // a PB-sync request landed
+		if (!c || !c.mapID || c.fetchFailed || !this.canLiveRefresh()) return; // mapID 0 = offline/local replays
+		const main = c.tracks?.find((t) => t.trackType === TrackType.MAIN && t.trackNum === 1);
+		if (!main || main.rank == null || !main.totalCompletions) return; // not completed / rank not fetched yet
+		const key = this.perMapKey(c.mapID, c.gamemode, c.style);
+		const prev = perMapRank[key];
+		// The cache's PB time and the REST one can differ by float noise — keep the stored one if it's the same PB,
+		// so merely browsing maps in the map selector doesn't rewrite the cache.
+		const sameTime = prev?.time != null && main.time != null && Math.abs(prev.time - main.time) <= PB_EPS;
+		const time = sameTime ? prev!.time : (main.time ?? prev?.time ?? null);
+		const next: PerMapRank = {
+			rank: main.rank,
+			time,
+			total: main.totalCompletions,
+			// Completions carry no WR time: a WR is your own time, otherwise keep what the scan last saw.
+			wrTime: main.rank === 1 ? time : (prev?.wrTime ?? null)
+		};
+		const flipped = this.refreshScanCacheEntry(c.mapID, c.gamemode, c.style);
+		if (prev?.rank !== next.rank || prev?.time !== next.time) {
+			delete mapLbCache[key]; // the board this player is on changed — refetch the popup next time
+			for (const k of Object.keys(yourStandingCache)) if (k.startsWith(`${key}|`)) delete yourStandingCache[k];
+		}
+		const changed = this.applyPerMapUpdate(c.gamemode, c.style, key, next);
+		if (flipped) this.rerenderIfShown();
+		if (changed) $.Msg(`[Stats] completions update: ${key} → rank ${next.rank}/${next.total}`);
+	}
+
+	/** A run was uploaded on the current map. The completions event normally covers it, but it isn't
+	 *  guaranteed for every style, so re-query this map's boards we track (cached keys + the mode's default
+	 *  style) directly. A handful of requests, only after an upload. */
+	async onRunUploaded() {
+		if (!this.canLiveRefresh()) return;
+		let mapID = 0;
+		let gm: Gamemode;
+		try {
+			mapID = MapCacheAPI.GetCurrentMapData()?.staticData?.id ?? 0;
+			gm = GameModeAPI.GetCurrentGameMode();
+		} catch {
+			return;
+		}
+		if (!mapID) return;
+		const uid = this.viewUid();
+		if (!uid) return;
+
+		const styles = new Set<Style>([GamemodeDefaultUIStyle.get(gm) ?? Style.NORMAL]);
+		const prefix = `${mapID}|${gm}|`;
+		for (const k of Object.keys(perMapRank)) if (k.startsWith(prefix)) styles.add(Number(k.slice(prefix.length)) as Style);
+
+		const gen = rankGen;
+		let flipped = false;
+		for (const style of styles) {
+			if (this.refreshScanCacheEntry(mapID, gm, style)) flipped = true;
+			const key = this.perMapKey(mapID, gm, style);
+			const res = await this.fetchRank(mapID, gm, style, uid);
+			if (gen !== rankGen || !this.canLiveRefresh()) return; // rescan / user switch in the meantime
+			if (!res.ok || res.rank == null) continue; // failed, or no run in this style
+			const { total, wrTime } = await this.fetchTotal(mapID, gm, style);
+			if (gen !== rankGen || !this.canLiveRefresh()) return;
+			delete mapLbCache[key];
+			for (const k of Object.keys(yourStandingCache)) if (k.startsWith(`${key}|`)) delete yourStandingCache[k];
+			this.applyPerMapUpdate(gm, style, key, { rank: res.rank, time: res.time, total: total > 0 ? total : null, wrTime });
+		}
+		if (flipped) this.rerenderIfShown();
+	}
+
+	/**
+	 * Work around the game's map cache missing completions until a map is clicked in the map selector:
+	 * 1. Pull the local player's PBs from the website (~1 request per 100 PBs). They count as completed on
+	 *    this page straight away (localApiDone), whatever the game's cache says.
+	 * 2. For each map the website has a PB on but the game's cache doesn't, ask the game to load its PBs
+	 *    (MapCacheAPI.RefreshUserPersonalBests, throttled) so the map selector's times / Completed filter
+	 *    pick it up too, then report how many the game actually took.
+	 * Runs once per session automatically (and again after a Rescan); local player only.
+	 */
+	async syncLocalPbs() {
+		if (localSyncBusy || viewUser || !scanCache) return;
+		let uid = 0;
+		try {
+			uid = MomentumAPI.GetLocalUserData()?.id ?? 0;
+		} catch {
+			uid = 0;
+		}
+		if (!uid) return;
+		localSyncBusy = true;
+		localSyncedThisSession = true;
+		const stale = () => viewUser != null || !scanCache; // switched to another user / rescan started
+		try {
+			this.setUserStatus('Checking your PBs online…');
+			const runs = await this.fetchPbRuns(uid, stale, (n) => {
+				if (!stale()) this.setUserStatus(`Checking your PBs online… ${n}`);
+			});
+			if (stale()) return;
+			if (!runs) {
+				this.setUserStatus('Could not load your PBs from the website.', true);
+				return;
+			}
+
+			const done = new Set<string>();
+			const times: Record<string, number> = {};
+			const byId = new Map(scanCache!.map((m) => [m.staticData.id, m]));
+			const gaps = new Map<string, { mapID: number; gm: Gamemode; style: Style }>();
+			for (const r of runs) {
+				done.add(this.doneKey(r.mapID, r.gamemode, r.trackType, r.trackNum, r.style));
+				if (r.trackType === TrackType.MAIN && r.trackNum === 1 && r.time != null)
+					times[this.perMapKey(r.mapID, r.gamemode, r.style)] = r.time;
+				const map = byId.get(r.mapID);
+				if (map && !this.localCacheHas(map, r.gamemode, r.trackType, r.trackNum, r.style))
+					gaps.set(this.perMapKey(r.mapID, r.gamemode, r.style), { mapID: r.mapID, gm: r.gamemode, style: r.style });
+			}
+			localApiDone = done;
+			localApiPbTimes = times;
+			$.Msg(`[Stats] PB sync: ${runs.length} PBs online, ${gaps.size} map/mode/style combos missing from the game cache`);
+
+			// Completion counts are now right on this page — redraw, and rank-check the newly counted maps.
+			this.recomputeTrackedRankResults();
+			this.rerenderIfShown();
+			if (gaps.size > 0) this.startIncrementalRefresh();
+
+			if (gaps.size === 0) {
+				this.setUserStatus(`PBs in sync · ${runs.length} PBs`);
+				return;
+			}
+
+			// Push the missing ones into the game's cache.
+			const list = [...gaps.values()];
+			let n = 0;
+			await this.pool(list, PB_REPAIR_CONCURRENCY, async (g) => {
+				if (stale()) return;
+				await this.requestGamePbs(g.mapID, g.gm, g.style);
+				n++;
+				if (!stale() && (n % 5 === 0 || n === list.length))
+					this.setUserStatus(`Loading missing PBs into the game… ${n}/${list.length}`);
+			});
+			if (stale()) return;
+
+			// Re-read the repaired maps and count what the game actually took.
+			let fixed = 0;
+			const fixedIds = new Set<number>();
+			for (const g of list) {
+				let fresh: MapCacheAPI.MapData | null = null;
+				try {
+					fresh = MapCacheAPI.GetMapData(g.mapID);
+				} catch {
+					fresh = null;
+				}
+				if (!fresh) continue;
+				if (!fixedIds.has(g.mapID)) {
+					const idx = scanCache!.findIndex((m) => m.staticData.id === g.mapID);
+					if (idx !== -1) scanCache![idx] = fresh;
+					fixedIds.add(g.mapID);
+				}
+				if (this.localCacheHas(fresh, g.gm, TrackType.MAIN, 1, g.style) || this.localCacheAnyTrack(fresh, g.gm, g.style))
+					fixed++;
+			}
+			const left = list.length - fixed;
+			$.Msg(`[Stats] PB sync: game cache repaired ${fixed}/${list.length}`);
+			this.setUserStatus(
+				left === 0
+					? `Restored ${fixed} missing PBs to the game cache`
+					: `Restored ${fixed}/${list.length} missing PBs to the game cache · counted here either way`,
+				false
+			);
+		} finally {
+			localSyncBusy = false;
+		}
+	}
+
+	/** Whether the game's cache has ANY completed track for (map, gm, style) — a bonus-only PB counts as repaired. */
+	localCacheAnyTrack(map: MapCacheAPI.MapData, gm: Gamemode, style: Style): boolean {
+		const tracks = map.userData?.tracks;
+		if (!tracks) return false;
+		const trackStyle = style === Style.PRO || style === Style.TELEPORT ? 0 : style;
+		for (const [k, v] of Object.entries(tracks)) {
+			const key = Number(k);
+			if ((key >>> 24) === gm && (key & 0xff) === trackStyle && v?.completed) return true;
+		}
+		return false;
+	}
+
+	/** Ask the game to load the local player's PBs for one map/mode/style, resolving when its
+	 *  MapCache_CompletionsUpdate lands (or after a timeout — it doesn't fire if already fetched this session). */
+	requestGamePbs(mapID: number, gm: Gamemode, style: Style): Promise<void> {
+		const key = this.perMapKey(mapID, gm, style);
+		return new Promise((resolve) => {
+			let settled = false;
+			const finish = () => {
+				if (settled) return;
+				settled = true;
+				if (pbWaiters.get(key) === finish) pbWaiters.delete(key);
+				resolve();
+			};
+			pbWaiters.set(key, finish);
+			$.Schedule(PB_REPAIR_TIMEOUT, finish);
+			try {
+				MapCacheAPI.RefreshUserPersonalBests(mapID, gm, style);
+			} catch {
+				finish();
+			}
+		});
+	}
+
+	//#endregion
 
 	/** Badge label + colour for a cutoff row. Sentinel group 0 is the board's absolute last place. */
 	cutoffBadge(group: number): { badge: string; color: string } {
@@ -2064,13 +2361,11 @@ class StatsHandler {
 		return this.aggregateResults(keys);
 	}
 
-	/** Best (lowest-numbered) group 1..6 a rank earns on a board of `total`, or 0 if worse than G6. */
+	/** Official group 1..6 a rank falls into on a board of `total`, or 0 if past the last grouped rank. */
 	bestGroup(rank: number, total: number): number {
-		for (let i = 0; i < GROUP_DEFS.length; i++) {
-			const def = GROUP_DEFS[i];
-			if (rank <= Math.max(total * def.pct + 10, def.floor)) return i + 1;
-		}
-		return 0;
+		// 1..6 for G1..G6, 0 for no group. WR / Top 10 are handled by callers (rank ≤ 10 never reaches here as a group).
+		const g = getCompletionGroup(rank, getRankGroupEnds(total));
+		return g != null && g >= CompletionGroup.GROUP_1 && g <= CompletionGroup.GROUP_6 ? g - CompletionGroup.GROUP_1 + 1 : 0;
 	}
 
 	/** Sum a set of cached per-filter results into one. Missing keys → still scanning (pctPending). */
@@ -2169,14 +2464,13 @@ class StatsHandler {
 				tip: 'Top 10 — ranks 2–10 (WRs excluded)'
 			}
 		];
-		for (let i = 0; i < GROUP_DEFS.length; i++) {
-			const def = GROUP_DEFS[i];
+		for (let i = 0; i < RANK_GROUP_COUNT; i++) {
 			cells.push({
 				label: `G${i + 1}`,
 				count: r.groups[i],
 				color: GROUP_COLORS[i],
 				pending: r.pctPending,
-				tip: `G${i + 1} · best of top ${Math.round(def.pct * 100)}% + 10 or top ${def.floor} (Top 10 excluded)`
+				tip: `G${i + 1} · official rank group (same as the in-game leaderboards and website, Top 10 excluded)`
 			});
 		}
 
@@ -2686,10 +2980,19 @@ class StatsHandler {
 		// (mom_style); Pro/Teleport are climb *leaderboard* classifications (not run styles) stored at
 		// style 0. Every other style is a real run style under its own key — so a Normal run never
 		// counts as Sideways/W-only/etc.
+		if (this.localCacheHas(map, gm, TrackType.MAIN, 1, style)) return true;
+		// The game's cache can miss completions (until the map is clicked in the map selector), so also
+		// trust the website's PB list from the last local sync. Keyed by leaderboard style, like remoteDone.
+		return !!localApiDone?.has(this.doneKey(map.staticData.id, gm, TrackType.MAIN, 1, style));
+	}
+
+	/** Whether the game's own map cache records the local player completing a track. Takes the LEADERBOARD
+	 *  style: Pro/Teleport are climb leaderboard classifications stored at run style 0. */
+	localCacheHas(map: MapCacheAPI.MapData, gm: Gamemode, tt: TrackType, tn: number, style: Style): boolean {
 		const userData = map.userData;
 		if (!userData) return false;
 		const trackStyle = style === Style.PRO || style === Style.TELEPORT ? 0 : style;
-		return !!getUserMapDataTrack(userData, gm, TrackType.MAIN, 1, trackStyle)?.completed;
+		return !!getUserMapDataTrack(userData, gm, tt, tn, trackStyle)?.completed;
 	}
 
 	frac(completed: number, total: number): number {
