@@ -18,6 +18,10 @@ const DEFAULT_GRAPH_BOUND_COLOR = 'rgba(255, 255, 255, 0.5)' as color; // top/bo
 const GRAPH_MIN_SCALE = 1.05; // dynamic mode: scale at low speed (optimal line ~95%, near the top)
 const GRAPH_DYN_MAX_SPEED = 2500; // dynamic mode: velocity at which the optimal line bottoms out
 const GRAPH_DYN_FLOOR = 0.25; // dynamic mode: optimal line's lowest fraction (25%) at/above max speed
+const GRAPH_SIZE_REFRESH = 60; // re-read the canvas size every N draws (layout reads aren't free)
+const GRAPH_MIN_SLICE_PX = 0.5; // slices shorter than this aren't drawn (e.g. every sample while idle)
+const GRAPH_MERGE_PX = 0.5; // neighbouring slices whose heights differ by less than this merge into one quad
+const clamp01 = (x: number) => Math.min(Math.max(x, 0), 1);
 
 const RAD2DEG = 180 / Math.PI;
 const DEG2RAD = 1 / RAD2DEG;
@@ -77,11 +81,30 @@ class StrafeTrainer {
 	graphRange = 2; // headroom: axis top = graphRange × optimal (200% ⇒ optimal line at half height)
 	graphLineColor: color = DEFAULT_GRAPH_LINE_COLOR; // colour of the "optimal" reference line
 	graphBoundColor: color = DEFAULT_GRAPH_BOUND_COLOR; // colour of the top/bottom bound lines
-	// Ring buffer of recent samples. ratio = actual/optimal yaw (bar height vs the optimal line);
+	// Ring buffer of recent samples (fixed-size typed arrays, `graphHead` = index of the OLDEST sample, so
+	// adding one is O(1) with no allocation). ratio = actual/optimal yaw (bar height vs the optimal line);
 	// speed = horizontal velocity this tick (drives the dynamic scale); gain = gain ratio (bar colour).
 	// Everything is scaled per-sample from these stored values, so old bars never rescale as new ticks
 	// scroll in (a spike leaving the window doesn't shift the rest).
-	graphHistory: { ratio: number; speed: number; gain: number }[] = [];
+	graphRatio = new Float32Array(DEFAULT_GRAPH_SAMPLES);
+	graphSpeed = new Float32Array(DEFAULT_GRAPH_SAMPLES);
+	graphGain = new Float32Array(DEFAULT_GRAPH_SAMPLES);
+	// Each sample's bar colour pair, resolved ONCE when the sample is recorded (getColorPair's lerps parse and
+	// format rgba strings - far too slow to redo for every sample every frame).
+	graphColors: [color, color][] = [];
+	graphHead = 0;
+	// Bumped whenever a colour setting changes, so the stored colour pairs get re-resolved once.
+	colorVersion = 0;
+	graphColorVersion = -1;
+	// Cached canvas size in logical px (re-read every GRAPH_SIZE_REFRESH draws, or after a mode change).
+	graphW = 0;
+	graphH = 0;
+	graphSizeAge = 0;
+	// Scratch arrays reused for every draw call instead of allocating per slice.
+	readonly polyPts: number[] = [0, 0, 0, 0, 0, 0, 0, 0];
+	readonly polyCols: string[] = ['', '', '', ''];
+	readonly linePts: number[] = [0, 0, 0, 0];
+	optPts: number[] = [];
 	colorByGainEnable: boolean;
 	dynamicEnable: boolean;
 	flipEnable: boolean;
@@ -259,7 +282,8 @@ class StrafeTrainer {
 				graphRange: {
 					name: $.Localize('#Customizer_Strafe_Trainer_GraphRange'),
 					type: CustomizerPropertyType.NUMBER_ENTRY,
-					callbackFunc: (_, value) => (this.graphRange = Number.isFinite(value) ? Math.max(1.05, value / 100) : 2),
+					callbackFunc: (_, value) =>
+						(this.graphRange = Number.isFinite(value) ? Math.max(1.05, value / 100) : 2),
 					settingProps: { min: 1, max: 500, increment: 5 }
 				},
 				graphLineColor: {
@@ -415,12 +439,18 @@ class StrafeTrainer {
 						{ styleID: 'gainGradients', showWhen: true },
 						{ styleID: 'strafeBarColor', showWhen: false }
 					],
-					callbackFunc: (_, value) => (this.colorByGainEnable = value)
+					callbackFunc: (_, value) => {
+						this.colorByGainEnable = value;
+						this.colorVersion++;
+					}
 				},
 				strafeBarColor: {
 					name: $.Localize('#Customizer_Strafe_Trainer_StrafeBarColor'),
 					type: CustomizerPropertyType.GRADIENT_PICKER,
-					callbackFunc: (_, value) => (this.strafeBarGradient = value)
+					callbackFunc: (_, value) => {
+						this.strafeBarGradient = value;
+						this.colorVersion++;
+					}
 				},
 				gainGradients: {
 					name: $.Localize('#Customizer_Strafe_Trainer_GainGradients'),
@@ -439,37 +469,58 @@ class StrafeTrainer {
 				gainExtra: {
 					name: $.Localize('#Customizer_Strafe_Trainer_GainExtra'),
 					type: CustomizerPropertyType.GRADIENT_PICKER,
-					callbackFunc: (_, value) => (Colors.EXTRA = value as [color, color])
+					callbackFunc: (_, value) => {
+						Colors.EXTRA = value as [color, color];
+						this.colorVersion++;
+					}
 				},
 				gainPerfect: {
 					name: $.Localize('#Customizer_Strafe_Trainer_GainPerfect'),
 					type: CustomizerPropertyType.GRADIENT_PICKER,
-					callbackFunc: (_, value) => (Colors.PERFECT = value as [color, color])
+					callbackFunc: (_, value) => {
+						Colors.PERFECT = value as [color, color];
+						this.colorVersion++;
+					}
 				},
 				gainGood: {
 					name: $.Localize('#Customizer_Strafe_Trainer_GainGood'),
 					type: CustomizerPropertyType.GRADIENT_PICKER,
-					callbackFunc: (_, value) => (Colors.GOOD = value as [color, color])
+					callbackFunc: (_, value) => {
+						Colors.GOOD = value as [color, color];
+						this.colorVersion++;
+					}
 				},
 				gainSlow: {
 					name: $.Localize('#Customizer_Strafe_Trainer_GainSlow'),
 					type: CustomizerPropertyType.GRADIENT_PICKER,
-					callbackFunc: (_, value) => (Colors.SLOW = value as [color, color])
+					callbackFunc: (_, value) => {
+						Colors.SLOW = value as [color, color];
+						this.colorVersion++;
+					}
 				},
 				gainNeutral: {
 					name: $.Localize('#Customizer_Neutral'),
 					type: CustomizerPropertyType.GRADIENT_PICKER,
-					callbackFunc: (_, value) => (Colors.NEUTRAL = value as [color, color])
+					callbackFunc: (_, value) => {
+						Colors.NEUTRAL = value as [color, color];
+						this.colorVersion++;
+					}
 				},
 				gainLoss: {
 					name: $.Localize('#Customizer_Loss'),
 					type: CustomizerPropertyType.GRADIENT_PICKER,
-					callbackFunc: (_, value) => (Colors.LOSS = value as [color, color])
+					callbackFunc: (_, value) => {
+						Colors.LOSS = value as [color, color];
+						this.colorVersion++;
+					}
 				},
 				gainStop: {
 					name: $.Localize('#Customizer_Strafe_Trainer_GainStop'),
 					type: CustomizerPropertyType.GRADIENT_PICKER,
-					callbackFunc: (_, value) => (Colors.STOP = value as [color, color])
+					callbackFunc: (_, value) => {
+						Colors.STOP = value as [color, color];
+						this.colorVersion++;
+					}
 				}
 			},
 			postInit: () => this.updateStats()
@@ -502,10 +553,14 @@ class StrafeTrainer {
 		const gainRatio = this.getBufferedSum(this.gainRatioHistory);
 		const yawRatio = this.getBufferedSum(this.yawRatioHistory);
 
-		const colorTuple = this.colorByGainEnable
-			? this.getColorPair(gainRatio, false) //strafeRight * yawRatio > 1
-			: this.strafeBarGradient;
-		const color = `gradient(linear, 0% 0%, 0% 100%, from(${colorTuple[0]}), to(${colorTuple[1]}))` as color;
+		// The bar colour is only used by the bar modes - graph mode colours each sample itself.
+		let color = '' as color;
+		if (this.displayMode !== DisplayMode.GRAPH) {
+			const colorTuple = this.colorByGainEnable
+				? this.getColorPair(gainRatio, false) //strafeRight * yawRatio > 1
+				: this.strafeBarGradient;
+			color = `gradient(linear, 0% 0%, 0% 100%, from(${colorTuple[0]}), to(${colorTuple[1]}))` as color;
+		}
 		let flow;
 
 		switch (this.displayMode) {
@@ -547,8 +602,9 @@ class StrafeTrainer {
 				// current speed (drives the dynamic scale), and gain ratio (bar colour), then redraw.
 				// yawRatio > 1 = turning too fast, so the bar goes over the optimal line.
 				const speed = MomMath.magnitude2D(MomentumPlayerAPI.GetVelocity());
-				this.graphHistory.push({ ratio: yawRatio, speed, gain: gainRatio });
-				this.graphHistory.shift();
+				this.pushGraphSample(yawRatio, speed, gainRatio);
+				// Nothing to draw while the HUD element is disabled in the customizer (samples still record).
+				if (!$.GetContextPanel().enabled) break;
 				this.drawGraph();
 				break;
 			}
@@ -685,8 +741,9 @@ class StrafeTrainer {
 			case DisplayMode.GRAPH:
 				this.panels.needle.style.visibility = 'collapse';
 				// Start with a clean history + canvas so stale bars don't linger.
-				this.graphHistory = this.makeGraphBuffer();
+				this.resetGraphBuffer();
 				this.panels.graphCanvas?.SetMaxDrawCommands(this.graphSamples * 8 + 64);
+				this.graphSizeAge = 0; // the canvas just became visible - re-read its size
 				this.drawGraph(); // draw the empty graph + optimal line immediately (e.g. in the customizer)
 				break;
 		}
@@ -702,14 +759,41 @@ class StrafeTrainer {
 
 	updateGraphSamples(newLength: number) {
 		this.graphSamples = Math.max(2, Math.round(newLength ?? DEFAULT_GRAPH_SAMPLES));
-		this.graphHistory = this.makeGraphBuffer();
+		this.resetGraphBuffer();
 		// generous budget: a shaded quad may be several draw commands, so leave lots of headroom (dropping
 		// commands would blank out slices at regular positions = static-looking vertical gaps).
 		this.panels.graphCanvas?.SetMaxDrawCommands(this.graphSamples * 8 + 64);
 	}
 
-	makeGraphBuffer(): { ratio: number; speed: number; gain: number }[] {
-		return Array.from({ length: this.graphSamples }, () => ({ ratio: 0, speed: 0, gain: 0 }));
+	/** Size the ring buffer to `graphSamples` and fill it with empty samples. */
+	resetGraphBuffer() {
+		const n = this.graphSamples;
+		this.graphRatio = new Float32Array(n);
+		this.graphSpeed = new Float32Array(n);
+		this.graphGain = new Float32Array(n);
+		const empty = this.sampleColor(0);
+		this.graphColors = Array.from({ length: n }, () => empty);
+		this.graphHead = 0;
+		this.graphColorVersion = this.colorVersion;
+		this.optPts = Array.from({ length: n * 2 }, () => 0);
+	}
+
+	/** Bar colour pair for a sample's gain ratio. */
+	sampleColor(gain: number): [color, color] {
+		const pair = this.colorByGainEnable ? this.getColorPair(gain, false) : this.strafeBarGradient;
+		return (pair ?? this.strafeBarGradient) as [color, color];
+	}
+
+	/** Record one sample, overwriting the oldest. O(1), no allocation beyond a lerped colour pair. */
+	pushGraphSample(ratio: number, speed: number, gain: number) {
+		const n = this.graphRatio.length;
+		if (n === 0) return;
+		const i = this.graphHead;
+		this.graphRatio[i] = ratio;
+		this.graphSpeed[i] = speed;
+		this.graphGain[i] = gain;
+		this.graphColors[i] = this.sampleColor(gain);
+		this.graphHead = (i + 1) % n;
 	}
 
 	/**
@@ -720,93 +804,167 @@ class StrafeTrainer {
 	 * Each sample is scaled from its OWN stored values (never from a window aggregate), so old bars stay
 	 * put as new ticks scroll in. Flat mode uses a fixed scale (`graphRange`) so the optimal line is level.
 	 * Dynamic mode sets the scale per-tick from that tick's speed: ~GRAPH_MIN_SCALE at rest (optimal near
-	 * the top) ramping to 1/GRAPH_DYN_FLOOR (optimal ~25%) at GRAPH_DYN_MAX_SPEED, then flat — so the
+	 * the top) ramping to 1/GRAPH_DYN_FLOOR (optimal ~25%) at GRAPH_DYN_MAX_SPEED, then flat - so the
 	 * optimal line falls as you speed up and bottoms out at max speed. Orientation just remaps coords.
+	 *
+	 * Performance (this runs every HudProcessInput): colours are pre-resolved per sample, buffers are reused
+	 * (no per-slice allocation), zero-height slices are skipped, consecutive slices with the same height and
+	 * colour are merged into one quad, and the flat-mode optimal line is a single segment.
 	 */
 	drawGraph() {
 		const canvas = this.panels.graphCanvas;
 		if (!canvas?.IsValid()) return;
 
-		// Convert to logical pixels, accounting for UI scaling (see line-graph.ts).
-		const W = canvas.actuallayoutwidth / canvas.actualuiscale_x;
-		const H = canvas.actuallayoutheight / canvas.actualuiscale_y;
+		// Convert to logical pixels, accounting for UI scaling (see line-graph.ts). Layout reads aren't free,
+		// so the size is cached and only re-read periodically (or when it was unknown).
+		if (this.graphSizeAge <= 0 || !(this.graphW > 0) || !(this.graphH > 0)) {
+			this.graphW = canvas.actuallayoutwidth / canvas.actualuiscale_x;
+			this.graphH = canvas.actuallayoutheight / canvas.actualuiscale_y;
+			this.graphSizeAge = GRAPH_SIZE_REFRESH;
+		}
+		this.graphSizeAge--;
+		const W = this.graphW;
+		const H = this.graphH;
 		if (!(W > 0) || !(H > 0)) return;
 
 		canvas.Clear('#00000000');
 
-		const n = this.graphHistory.length;
+		const n = this.graphRatio.length;
 		if (n === 0) return;
+
+		// A colour setting changed since the samples were coloured - re-resolve them once.
+		if (this.graphColorVersion !== this.colorVersion) {
+			for (let k = 0; k < n; k++) this.graphColors[k] = this.sampleColor(this.graphGain[k]);
+			this.graphColorVersion = this.colorVersion;
+		}
 
 		const horizontal = this.graphOrientation === GraphOrientation.HORIZONTAL;
 		const dynamic = this.graphOptimal === GraphOptimal.DYNAMIC;
 		const range = this.graphRange; // flat mode: the fixed scale
 
-		const timeLen = horizontal ? W : H; // axis the samples march along (oldest → newest)
+		const timeLen = horizontal ? W : H; // axis the samples march along (oldest -> newest)
 		const valLen = horizontal ? H : W; // axis the value grows along
 
 		const slot = timeLen / n; // width of one sample along the time axis
 		// Slices tile edge-to-edge with a tiny overlap. A gap here would sit at a FIXED screen x while the
-		// waveform scrolls through the slots, showing up as static vertical lines — so no gap, and the
+		// waveform scrolls through the slots, showing up as static vertical lines - so no gap, and the
 		// overlap hides anti-aliased seams between the (opaque) slices.
 		const overlap = 0.75;
 
-		const clamp01 = (x: number) => Math.min(Math.max(x, 0), 1);
-		// This sample's scale = "axis top ÷ optimal". Flat is a constant (graphRange). Dynamic ramps the
-		// scale up with speed — from GRAPH_MIN_SCALE (optimal ~95%, at rest) to 1/GRAPH_DYN_FLOOR (optimal
-		// ~25%) at GRAPH_DYN_MAX_SPEED, then flat — so the optimal line falls as you go faster.
+		// This sample's scale = "axis top / optimal". Flat is a constant (graphRange). Dynamic ramps the
+		// scale up with speed - from GRAPH_MIN_SCALE (optimal ~95%, at rest) to 1/GRAPH_DYN_FLOOR (optimal
+		// ~25%) at GRAPH_DYN_MAX_SPEED, then flat - so the optimal line falls as you go faster.
 		const dynMaxScale = 1 / GRAPH_DYN_FLOOR;
 		const scaleOf = (speed: number) =>
-			dynamic
-				? GRAPH_MIN_SCALE + (dynMaxScale - GRAPH_MIN_SCALE) * clamp01(speed / GRAPH_DYN_MAX_SPEED)
-				: range;
+			dynamic ? GRAPH_MIN_SCALE + (dynMaxScale - GRAPH_MIN_SCALE) * clamp01(speed / GRAPH_DYN_MAX_SPEED) : range;
 
-		// map (time position, value fraction 0..1) → canvas x/y (canvas y grows downward)
-		const map = (t: number, f: number): [number, number] =>
-			horizontal ? [t, valLen - f * valLen] : [f * valLen, t];
+		const pts = this.polyPts;
+		const cols = this.polyCols;
+		// One quad from time t0..t1 at value fraction f (canvas y grows downward), darker at the baseline.
+		const drawSlice = (t0: number, t1: number, f: number, pair: [color, color]) => {
+			if (horizontal) {
+				const yTop = valLen - f * valLen;
+				pts[0] = t0;
+				pts[1] = valLen; // baseline
+				pts[2] = t0;
+				pts[3] = yTop; // tip
+				pts[4] = t1;
+				pts[5] = yTop;
+				pts[6] = t1;
+				pts[7] = valLen;
+			} else {
+				const x = f * valLen;
+				pts[0] = 0;
+				pts[1] = t0;
+				pts[2] = x;
+				pts[3] = t0;
+				pts[4] = x;
+				pts[5] = t1;
+				pts[6] = 0;
+				pts[7] = t1;
+			}
+			cols[0] = pair[0];
+			cols[1] = pair[1];
+			cols[2] = pair[1];
+			cols[3] = pair[0];
+			canvas.DrawShadedPoly(4, pts, cols);
+		};
 
-		// Slices: actual turn, coloured by gain.
+		// Slices: actual turn, coloured by gain. Walk oldest -> newest; consecutive samples with the same
+		// height and colour extend one run instead of each drawing its own quad, and empty ones are skipped.
+		let runStart = -1;
+		let runF = 0;
+		let runPair: [color, color] | null = null;
+		const flush = (end: number) => {
+			if (runStart >= 0 && runPair) drawSlice(runStart * slot - overlap, end * slot + overlap, runF, runPair);
+			runStart = -1;
+		};
 		for (let i = 0; i < n; i++) {
-			const s = this.graphHistory[i];
-			const pair = (this.colorByGainEnable ? this.getColorPair(s.gain, false) : this.strafeBarGradient) ??
-				this.strafeBarGradient;
-			const [cLow, cHigh] = pair;
-
-			const t0 = i * slot - overlap;
-			const t1 = (i + 1) * slot + overlap;
-			const f = clamp01(s.ratio / scaleOf(s.speed));
-
-			const p0 = map(t0, 0); // baseline
-			const p1 = map(t0, f); // tip
-			const p2 = map(t1, f);
-			const p3 = map(t1, 0);
-			// gradient darker at the baseline, brighter at the tip
-			canvas.DrawShadedPoly(
-				4,
-				[p0[0], p0[1], p1[0], p1[1], p2[0], p2[1], p3[0], p3[1]],
-				[cLow, cHigh, cHigh, cLow]
-			);
+			const k = (this.graphHead + i) % n;
+			const f = clamp01(this.graphRatio[k] / scaleOf(this.graphSpeed[k]));
+			const pair = this.graphColors[k];
+			if (f * valLen < GRAPH_MIN_SLICE_PX) {
+				flush(i); // nothing visible for this sample
+				continue;
+			}
+			if (
+				runStart >= 0 &&
+				runPair !== null &&
+				Math.abs(f - runF) * valLen < GRAPH_MERGE_PX &&
+				(pair === runPair || (pair[0] === runPair[0] && pair[1] === runPair[1]))
+			)
+				continue; // same height + colour - extend the current run
+			flush(i);
+			runStart = i;
+			runF = f;
+			runPair = pair;
 		}
+		flush(n);
 
 		// Bound lines along the top and bottom edges. Inset by HALF the line thickness so each line sits
-		// flush against its edge (fully visible, not clipped) — the bottom line then covers the bar bases
+		// flush against its edge (fully visible, not clipped) - the bottom line then covers the bar bases
 		// instead of floating above them, so no slice colour peeks out below it.
 		const edgeThick = 2;
-		const edge = (f: number) => {
-			const a = map(0, f);
-			const b = map(timeLen, f);
-			canvas.DrawLinePoints(2, [a[0], a[1], b[0], b[1]], edgeThick, this.graphBoundColor);
+		const lp = this.linePts;
+		const line = (f: number, lineColor: color, thick: number) => {
+			if (horizontal) {
+				const y = valLen - f * valLen;
+				lp[0] = 0;
+				lp[1] = y;
+				lp[2] = timeLen;
+				lp[3] = y;
+			} else {
+				const x = f * valLen;
+				lp[0] = x;
+				lp[1] = 0;
+				lp[2] = x;
+				lp[3] = timeLen;
+			}
+			canvas.DrawLinePoints(2, lp, thick, lineColor);
 		};
 		const insetF = valLen > edgeThick ? edgeThick / 2 / valLen : 0;
-		edge(insetF); // baseline (flush with the bottom, over the bar bases)
-		edge(1 - insetF); // ceiling
+		line(insetF, this.graphBoundColor, edgeThick); // baseline (flush with the bottom, over the bar bases)
+		line(1 - insetF, this.graphBoundColor, edgeThick); // ceiling
 
-		// Optimal line as a polyline through each sample's optimal fraction (flat ⇒ level, dynamic ⇒ moves).
-		const optPts: number[] = [];
-		for (let i = 0; i < n; i++) {
-			const p = map((i + 0.5) * slot, clamp01(1 / scaleOf(this.graphHistory[i].speed)));
-			optPts.push(p[0], p[1]);
+		// Optimal line: level in flat mode (one segment), else a polyline through each sample's optimal fraction.
+		if (!dynamic) {
+			line(clamp01(1 / range), this.graphLineColor, 2);
+			return;
 		}
-		canvas.DrawLinePoints(n, optPts, 2, this.graphLineColor);
+		const opt = this.optPts;
+		for (let i = 0; i < n; i++) {
+			const k = (this.graphHead + i) % n;
+			const t = (i + 0.5) * slot;
+			const f = clamp01(1 / scaleOf(this.graphSpeed[k]));
+			if (horizontal) {
+				opt[i * 2] = t;
+				opt[i * 2 + 1] = valLen - f * valLen;
+			} else {
+				opt[i * 2] = f * valLen;
+				opt[i * 2 + 1] = t;
+			}
+		}
+		canvas.DrawLinePoints(n, opt, 2, this.graphLineColor);
 	}
 
 	NaNCheck(val: any, def: any) {
