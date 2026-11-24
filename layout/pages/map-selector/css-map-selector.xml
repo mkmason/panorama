@@ -8,7 +8,10 @@
 	</scripts>
 
 	<Panel class="mainmenu__page cssmaps-page" onload="CssMapSelectorHandler.onLoad()">
-		<Panel class="cssmaps">
+		<!-- Popup window over the CS:S menu: clicking anywhere outside the window closes it, like its X. The window
+		     catches its own clicks (hittest + empty onactivate) so they don't fall through to this backdrop. -->
+		<Button class="css-window-backdrop" onactivate="$.DispatchEvent('MainMenu_ClosePage');" />
+		<Panel class="cssmaps css-window" hittest="true" onactivate="">
 			<!-- Title bar -->
 			<Panel class="cssmaps__titlebar">
 				<Label class="cssmaps__title" text="Maps" />
@@ -34,13 +37,53 @@
 			<Panel class="cssmaps__bottom">
 				<Panel id="CssMapsFilters" class="cssmaps__filters" />
 				<Label id="CssMapsCount" class="cssmaps__count" text="" />
+				<!-- Search by map name and/or author (every word must match one of them) -->
+				<Panel class="cssmaps__search">
+					<Label class="cssmaps__search-label" text="Search:" />
+					<Panel class="cssmaps__search-field">
+						<TextEntry id="CssMapsSearch" class="cssmaps__search-entry" maxchars="64" placeholder="Map or author" ontextentrychange="CssMapSelectorHandler.onSearchChanged()" />
+						<Button id="CssMapsSearchClear" class="cssmaps__search-clear" onactivate="CssMapSelectorHandler.clearSearch()">
+							<Image class="cssmaps__search-clear-icon" src="file://{images}/close.svg" textureheight="16" />
+						</Button>
+					</Panel>
+				</Panel>
 				<Panel class="w-fill" />
+				<Button id="CssMapsLeaderboards" class="cssmaps__btn" onactivate="CssMapSelectorHandler.openLeaderboard()">
+					<Label class="cssmaps__btn-text" text="Leaderboards" />
+				</Button>
 				<Button class="cssmaps__btn" onactivate="CssMapSelectorHandler.refresh()">
 					<Label class="cssmaps__btn-text" text="Refresh" />
 				</Button>
 				<Button id="CssMapsConnect" class="cssmaps__btn cssmaps__btn--connect" onactivate="CssMapSelectorHandler.connect()">
 					<Label class="cssmaps__btn-text" text="Connect" />
 				</Button>
+			</Panel>
+		</Panel>
+		<!-- Leaderboards popup for the selected map (scripts/common/map-leaderboard-popup.ts, shared look with the
+		     Stats page's popup: .statslb in styles/pages/css-stats.scss). Clicking outside the card closes it. -->
+		<Panel id="MapLbPopup" class="statslb statslb--css" style="visibility: collapse;">
+			<Button class="statslb__backdrop" onactivate="CssMapSelectorHandler.closeLeaderboard()" />
+			<Panel class="statslb__card" hittest="true" onactivate="">
+				<Panel class="statslb__cssbar">
+					<Label class="statslb__cssbar-title" text="Leaderboards" />
+					<Button class="statslb__cssbar-close" onactivate="CssMapSelectorHandler.closeLeaderboard()">
+						<Image class="statslb__cssbar-close-icon" src="file://{images}/close.svg" textureheight="24" />
+					</Button>
+				</Panel>
+				<Panel class="statslb__content">
+					<Panel id="MapLbImages" class="statslb__images" />
+					<Panel class="statslb__main">
+						<Panel class="statslb__head">
+							<Label id="MapLbTitle" class="statslb__title" text="" />
+							<Button class="statslb__refresh" onactivate="CssMapSelectorHandler.refreshLeaderboard()">
+								<Label class="statslb__refresh-text" text="Refresh" />
+							</Button>
+						</Panel>
+						<Label id="MapLbSubtitle" class="statslb__subtitle" text="" />
+						<Label id="MapLbStatus" class="statslb__status" text="" style="visibility: collapse;" />
+						<Panel id="MapLbList" class="statslb__list" />
+					</Panel>
+				</Panel>
 			</Panel>
 		</Panel>
 	</Panel>

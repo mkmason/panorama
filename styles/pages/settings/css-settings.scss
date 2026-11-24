@@ -1,0 +1,795 @@
+@use '../../config' as *;
+
+// CS:S-styled Options window (layout/pages/settings/css-settings.xml), opened from the CS:S main menu. Same skin as
+// the CS:S map selector (styles/pages/map-selector/css-map-selector.scss): warm olive-grey beveled window, engraved
+// text. Orange only for hovered items in an open dropdown list.
+//
+// The settings pages and setting components are separate layout files, so their rules below match classes that
+// SettingsHandler.applyCssSkin puts on each panel (css-skin, css-skin-choice, ...) instead of descending from
+// .cssopts. Doubled classes beat the normal settings/control styles regardless of stylesheet order.
+
+$css-window: rgba(125, 124, 121);
+$css-panel: rgba(91, 90, 88);
+$css-tab: rgba(125, 124, 121);
+$css-orange: #d9871f;
+$css-orange-text: #14120b;
+$css-text: #ecece3;
+$css-text-dim: #c2c2b5;
+$css-text-disabled: #8f8f84;
+$css-line-dark: rgba(0, 0, 0, 0.45);
+$css-line-light: rgba(255, 255, 255, 0.24);
+$css-engrave: 0px 1px 0px rgba(0, 0, 0, 0.4);
+$css-field: rgba(20, 20, 16, 0.55);
+
+@mixin raised {
+	border-top: 1px solid $css-line-light;
+	border-left: 1px solid $css-line-light;
+	border-right: 1px solid $css-line-dark;
+	border-bottom: 1px solid $css-line-dark;
+}
+
+@mixin sunken {
+	border-top: 1px solid $css-line-dark;
+	border-left: 1px solid $css-line-dark;
+	border-right: 1px solid $css-line-light;
+	border-bottom: 1px solid $css-line-light;
+}
+
+@mixin css-text($size: 14px) {
+	font-family: $font;
+	font-size: $size;
+	font-weight: normal;
+	letter-spacing: 0px;
+	text-transform: none;
+	color: $css-text;
+	text-shadow: $css-engrave;
+}
+
+// ─── Window frame (all in css-settings.xml) ──────────────────────────────────
+
+.cssopts-page {
+	flow-children: down;
+	padding: 30px;
+}
+
+.cssopts {
+	flow-children: down;
+	width: 100%;
+	max-width: 1500px;
+	height: 100%;
+	horizontal-align: middle;
+	padding: 4px;
+	background-color: $css-window;
+	@include raised;
+	box-shadow: 0 4px 24px 2px rgba(0, 0, 0, 0.75);
+
+	&__titlebar {
+		flow-children: right;
+		width: 100%;
+		height: 30px;
+		padding: 0 4px 0 10px;
+		border-bottom: 1px solid $css-line-dark;
+	}
+
+	&__title {
+		@include css-text(16px);
+		width: fill-parent-flow(1);
+		font-weight: bold;
+		vertical-align: center;
+	}
+
+	&__close {
+		width: 24px;
+		height: 24px;
+		padding: 4px;
+		vertical-align: center;
+		horizontal-align: right;
+		border-radius: 2px;
+		transition: background-color 0.1s ease-in-out 0s;
+
+		&:hover {
+			background-color: $red;
+			sound: 'UIPanorama.ButtonRollover';
+		}
+	}
+
+	&__close-icon {
+		width: 100%;
+		height: 100%;
+		wash-color: $css-text;
+	}
+
+	&__nav {
+		flow-children: down;
+		width: 100%;
+	}
+
+	// --- Tab row ---
+	&__tabrow {
+		flow-children: right;
+		width: 100%;
+		height: 34px;
+		margin-top: 6px;
+		padding: 0 4px;
+	}
+
+	&__tabs {
+		flow-children: right;
+		height: 100%;
+		vertical-align: bottom;
+	}
+
+	&__tab {
+		height: 30px;
+		padding: 0 14px;
+		margin-right: 2px;
+		vertical-align: bottom;
+		background-color: $css-tab;
+		border-top: 1px solid $css-line-light;
+		border-left: 1px solid $css-line-light;
+		border-right: 1px solid $css-line-dark;
+		transition: background-color 0.1s ease-in-out 0s;
+
+		&:hover {
+			sound: 'UIPanorama.ButtonRollover';
+		}
+
+		// Active tab joins the section-link strip below it
+		&:selected {
+			height: 32px;
+			background-color: $css-panel;
+		}
+	}
+
+	&__tab-label {
+		@include css-text(14px);
+		color: $css-text-dim;
+		vertical-align: center;
+
+		.cssopts__tab:selected & {
+			color: $white;
+			font-weight: bold;
+		}
+	}
+
+	// --- Search (right of the tabs) ---
+	&__search {
+		flow-children: right;
+		horizontal-align: right;
+		vertical-align: center;
+	}
+
+	&__search-label {
+		@include css-text(14px);
+		color: $css-text-dim;
+		vertical-align: center;
+		margin-right: 7px;
+	}
+
+	&__search-field {
+		width: 260px;
+		height: 26px;
+		vertical-align: center;
+		background-color: $css-field;
+		@include sunken;
+	}
+
+	&__search-entry {
+		@include css-text(14px);
+		text-shadow: none;
+		width: 100%;
+		height: 100%;
+		padding: 0 26px 0 6px;
+		background-color: none;
+		border: 0px;
+		vertical-align: center;
+
+		#PlaceholderText {
+			color: $css-text-disabled;
+		}
+
+		&:focus #PlaceholderText,
+		&.HasInput #PlaceholderText {
+			opacity: 0;
+		}
+	}
+
+	&__search-clear {
+		width: 22px;
+		height: 22px;
+		margin-right: 2px;
+		horizontal-align: right;
+		vertical-align: center;
+
+		&.search__clearbutton--hidden {
+			visibility: collapse;
+		}
+
+		&:hover .cssopts__search-clear-icon {
+			wash-color: $white;
+		}
+	}
+
+	&__search-clear-icon {
+		width: 14px;
+		height: 14px;
+		align: center center;
+		wash-color: $css-text-dim;
+	}
+
+	// --- Section links for the active tab ---
+	&__subrow {
+		width: 100%;
+		height: 30px;
+		padding: 0 6px;
+		background-color: $css-panel;
+		border-top: 1px solid $css-line-light;
+		border-bottom: 1px solid $css-line-dark;
+	}
+
+	&__subtabs {
+		flow-children: right;
+		height: 100%;
+		vertical-align: center;
+
+		&.settings-nav__subsection--hidden {
+			visibility: collapse;
+		}
+	}
+
+	&__subtab {
+		height: 22px;
+		padding: 0 10px;
+		margin-right: 4px;
+		vertical-align: center;
+		border: 1px solid rgba(0, 0, 0, 0);
+		transition: background-color 0.1s ease-in-out 0s;
+
+		&:hover {
+			background-color: rgba(255, 255, 255, 0.06);
+			sound: 'UIPanorama.ButtonRollover';
+		}
+
+		// Follows the scroll position (settings.ts onPageScrolled)
+		&:selected {
+			background-color: $css-field;
+			@include sunken;
+		}
+	}
+
+	&__subtab-label {
+		@include css-text(13px);
+		color: $css-text-dim;
+		vertical-align: center;
+
+		.cssopts__subtab:selected & {
+			color: $white;
+			font-weight: bold;
+		}
+	}
+
+	// --- Body: pages + description column ---
+	&__body {
+		flow-children: right;
+		width: 100%;
+		height: fill-parent-flow(1);
+		margin-top: 6px;
+		padding: 8px 0 8px 8px;
+		background-color: $css-panel;
+		@include sunken;
+	}
+
+	&__pages {
+		width: fill-parent-flow(1);
+		height: 100%;
+	}
+
+	&__info {
+		width: 340px;
+		height: 100%;
+		margin-left: 8px;
+		padding: 0 10px;
+		border-left: 1px solid $css-line-dark;
+	}
+
+	&__info-wrapper {
+		width: 100%;
+		margin-top: 4px;
+	}
+
+	&__info-title {
+		@include css-text(16px);
+		font-weight: bold;
+		margin-bottom: 6px;
+	}
+
+	&__info-text {
+		@include css-text(13px);
+		color: $css-text-dim;
+		margin-bottom: 8px;
+	}
+
+	&__info-cvar {
+		color: $css-text;
+	}
+
+	// --- Bottom bar ---
+	&__bottom {
+		flow-children: right;
+		width: 100%;
+		height: 40px;
+		margin-top: 6px;
+		padding: 0 4px;
+	}
+
+	&__btn {
+		height: 28px;
+		padding: 0 24px;
+		margin-left: 8px;
+		vertical-align: center;
+		background-color: $css-tab;
+		@include raised;
+		transition: background-color 0.1s ease-in-out 0s;
+
+		&:hover {
+			background-color: rgba(140, 139, 135);
+			sound: 'UIPanorama.ButtonRollover';
+		}
+
+		&:active {
+			@include sunken;
+		}
+
+		&--default .cssopts__btn-text {
+			font-weight: bold;
+		}
+	}
+
+	&__info-docs {
+		horizontal-align: left;
+		margin-left: 0px;
+	}
+
+	&__btn-text {
+		@include css-text(14px);
+		vertical-align: center;
+		horizontal-align: center;
+	}
+}
+
+// ─── Settings pages (tagged by SettingsHandler.applyCssSkin) ──────────────────
+
+// Page header: the tab row already names the page, so only its buttons (e.g. a gamemode dropdown) stay
+.settings-page__header.css-skin {
+	margin: 0 0 6px 0;
+	padding: 0 12px 0 0;
+}
+
+.settings-page__title.css-skin {
+	visibility: collapse;
+}
+
+.settings-page__container.css-skin {
+	padding-right: 10px;
+	border-radius: 0;
+}
+
+// Etched group box, like the CS:S options dialog's frames
+.settings-group.css-skin.css-skin {
+	padding: 10px;
+	padding-top: 8px;
+	background-color: rgba(0, 0, 0, 0.08);
+	border-radius: 0;
+	border-top: 1px solid $css-line-dark;
+	border-left: 1px solid $css-line-dark;
+	border-right: 1px solid $css-line-light;
+	border-bottom: 1px solid $css-line-light;
+}
+
+.settings-group__header.css-skin {
+	margin: 0 0 6px 0;
+}
+
+.settings-group__title.css-skin {
+	@include css-text(18px);
+	font-weight: bold;
+	vertical-align: center;
+}
+
+.settings-group__subtitle.css-skin {
+	@include css-text(15px);
+	font-weight: bold;
+	margin: 10px 0 4px 2px;
+}
+
+.settings-group__combo.css-skin.css-skin {
+	border-radius: 0;
+	border: 1px solid $css-line-dark;
+}
+
+.settings-group__combo-header.css-skin {
+	@include css-text(15px);
+	font-weight: bold;
+	padding: 5px 8px;
+	background-color: rgba(0, 0, 0, 0.12);
+	border-bottom: 1px solid $css-line-dark;
+}
+
+// Setting rows
+.settings-enum.css-skin.css-skin,
+.settings-enum-bitfield.css-skin.css-skin,
+.settings-enum-dropdown.css-skin.css-skin,
+.settings-slider.css-skin.css-skin,
+.settings-keybinder.css-skin.css-skin,
+.colordisplay.css-skin.css-skin {
+	height: 36px;
+	padding: 0 6px 0 8px;
+	margin-bottom: 0px;
+	border-radius: 0;
+	border: 0px none;
+	background-color: none;
+
+	&.--even {
+		background-color: rgba(0, 0, 0, 0.07);
+	}
+
+	&:hover {
+		background-color: rgba(255, 255, 255, 0.06);
+	}
+}
+
+.settings-enum-bitfield.css-skin.css-skin {
+	height: fit-children;
+}
+
+.settings-enum__title.css-skin,
+.settings-enum-bitfield__title.css-skin,
+.settings-enum-dropdown__title.css-skin,
+.settings-slider__title.css-skin,
+.settings-keybinder__title.css-skin,
+.colordisplay__title.css-skin {
+	@include css-text(14px);
+}
+
+// ─── Controls ────────────────────────────────────────────────────────────────
+// After the CS:S Options dialog: dark grey fields, thin grooved sliders with small beveled thumbs, sunken tick boxes.
+// The bright orange accent is kept for hovered items in an open dropdown list only (and the map selector's selected
+// row), not for resting/selected states.
+
+$css-control: rgba(76, 76, 74); // dropdown field / pressed choice
+$css-control-hover: rgba(86, 86, 84);
+$css-menu: rgba(154, 154, 150); // open dropdown list
+
+// Enum choices: beveled buttons; the selected one reads as pushed in (sunken, darker, bold white)
+.settings-enum__values.css-skin {
+	height: 26px;
+}
+
+.css-skin-choice.css-skin-choice {
+	min-width: 96px;
+	height: 26px;
+	margin-left: 4px;
+	padding: 0 10px;
+	border-radius: 0;
+	background-color: $css-tab;
+	@include raised;
+	box-shadow: none;
+
+	&:hover {
+		background-color: rgba(140, 139, 135);
+	}
+
+	&:selected,
+	&:selected:hover {
+		background-color: $css-control;
+		@include sunken;
+	}
+
+	&:disabled {
+		background-color: $css-panel;
+	}
+}
+
+// Same text as the dropdowns: regular 13px, no bold or caps. Also matched as the radio's direct Label child, since
+// the RadioButton creates that Label itself from its text attribute.
+.css-skin-choice-text.css-skin-choice-text,
+.css-skin-choice.css-skin-choice > Label {
+	@include css-text(13px);
+	font-weight: normal;
+	color: $css-text-dim;
+	horizontal-align: center;
+	vertical-align: center;
+	margin: 0px;
+	padding: 0px;
+}
+
+.css-skin-choice.css-skin-choice:selected > Label,
+.css-skin-choice.css-skin-choice:selected .css-skin-choice-text {
+	color: $white;
+	font-weight: normal;
+}
+
+// Generic buttons on the pages (import/export, reset, HUD customizer, ...)
+.css-skin-button.css-skin-button {
+	border-radius: 0;
+	background-color: $css-tab;
+	@include raised;
+	box-shadow: none;
+
+	&:hover {
+		background-color: rgba(140, 139, 135);
+	}
+
+	&:active {
+		@include sunken;
+	}
+}
+
+.css-skin-button-text.css-skin-button-text {
+	@include css-text(13px);
+}
+
+// Dropdown field: dark grey box, light text, plain white arrow
+.css-skin-dropdown.css-skin-dropdown {
+	// Width is set per group by SettingsHandler.applyCssSkin (widest option in the group)
+	width: fit-children;
+	min-width: 90px;
+	height: 24px;
+	horizontal-align: right;
+	border-radius: 0;
+	background-color: $css-control;
+	@include sunken;
+	box-shadow: none;
+
+	&:hover,
+	&.DropDownMenuVisible {
+		background-color: $css-control-hover;
+	}
+
+	// Selected value reads left-aligned, the arrow on the right (the field flows right-to-left)
+	Label {
+		@include css-text(13px);
+		font-weight: normal;
+		width: fill-parent-flow(1);
+		padding: 0 6px;
+		horizontal-align: left;
+		text-align: left;
+	}
+
+	.DropDownIcon {
+		width: 22px;
+		border: 0px;
+		border-radius: 0;
+		background-color: none;
+		background-size: 10px 10px;
+		box-shadow: none;
+		img-shadow: none;
+		wash-color: $css-text;
+	}
+
+	&:hover .DropDownIcon,
+	&.DropDownMenuVisible > .DropDownIcon {
+		background-color: none;
+		brightness: 1;
+	}
+}
+
+.DropDownIcon.css-skin.css-skin {
+	border-radius: 0;
+	background-color: none;
+	box-shadow: none;
+}
+
+// Open dropdown list: light grey, white text, orange hovered item
+.css-skin-menu.css-skin-menu {
+	// Width matches the field (set from SettingsHandler.setCssDropdownWidth)
+	width: fit-children;
+	padding: 0px;
+	border: 1px solid $css-line-dark;
+	border-radius: 0;
+	background-color: $css-menu;
+	box-shadow: 0 2px 8px 0 rgba(0, 0, 0, 0.5);
+
+	&.DropDownMenuVisible {
+		border-radius: 0;
+	}
+
+	Label {
+		@include css-text(13px);
+		font-weight: normal;
+		text-shadow: none;
+		width: 100%;
+		padding: 3px 6px;
+		background-color: none;
+
+		&:hover {
+			background-color: $css-orange;
+		}
+	}
+}
+
+.css-skin-menu-item.css-skin-menu-item {
+	@include css-text(13px);
+	text-shadow: none;
+	width: 100%;
+	padding: 3px 6px;
+	background-color: none;
+
+	&:hover {
+		background-color: $css-orange;
+	}
+}
+
+// Text fields (slider values etc.): sunken dark
+.css-skin-textentry.css-skin-textentry {
+	@include css-text(13px);
+	text-shadow: none;
+	height: 24px;
+	// TextEntry text sits at the top of the box, so pad it down to the middle
+	padding: 4px 6px 0px 6px;
+	text-align: center;
+	border-radius: 0;
+	background-color: $css-field;
+	@include sunken;
+	box-shadow: none;
+}
+
+// Sliders: a thin dark groove with a light lower edge, no coloured fill, a small beveled thumb
+.css-skin-slider.css-skin-slider {
+	#SliderTrack {
+		height: 4px;
+		border-radius: 0;
+		background-color: rgba(0, 0, 0, 0.35);
+		@include sunken;
+		box-shadow: none;
+	}
+
+	#SliderTrackProgress {
+		height: 4px;
+		background-color: none;
+	}
+
+	#SliderDefault,
+	#SliderDefault2 {
+		width: 2px;
+		height: 8px;
+		border-radius: 0;
+		background-color: rgba(255, 255, 255, 0.35);
+		box-shadow: none;
+	}
+
+	#SliderThumb,
+	#SliderThumb2 {
+		width: 9px;
+		height: 18px;
+		border-radius: 0;
+		background-color: rgba(150, 149, 145);
+		@include raised;
+		box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.4);
+
+		&:hover:not(:disabled) {
+			background-color: rgba(170, 169, 165);
+		}
+	}
+}
+
+// Same parts tagged directly, in case the descendant rules above don't reach into the slider's own children
+#SliderTrack.css-skin.css-skin {
+	height: 4px;
+	border-radius: 0;
+	background-color: rgba(0, 0, 0, 0.35);
+	@include sunken;
+	box-shadow: none;
+}
+
+#SliderTrackProgress.css-skin.css-skin {
+	height: 4px;
+	background-color: none;
+}
+
+#SliderThumb.css-skin.css-skin,
+#SliderThumb2.css-skin.css-skin {
+	width: 9px;
+	height: 18px;
+	border-radius: 0;
+	background-color: rgba(150, 149, 145);
+	@include raised;
+	box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.4);
+}
+
+// Checkboxes (bitfield flags): small sunken box, light tick when on
+.css-skin-check.css-skin-check {
+	background-color: none;
+
+	> Label {
+		@include css-text(13px);
+	}
+
+	&:hover {
+		background-color: none;
+	}
+}
+
+.css-skin-tickbox.css-skin-tickbox {
+	width: 14px;
+	height: 14px;
+	margin-right: 8px;
+	vertical-align: center;
+	border-radius: 0;
+	background-color: $css-field;
+	@include sunken;
+	box-shadow: none;
+	background-image: none;
+
+	.css-skin-check:hover & {
+		background-color: rgba(40, 40, 36, 0.6);
+	}
+
+	.css-skin-check:selected & {
+		background-color: $css-field;
+		background-image: url('file://{images}/checkmark.svg');
+		background-size: 90% 90%;
+		background-repeat: no-repeat;
+		background-position: 50% 50%;
+		wash-color: $css-text;
+		box-shadow: none;
+	}
+}
+
+// Keybinds: plain key names in a column, like the CS:S Keyboard tab, instead of keycaps. The row being bound
+// (selected) is the pressed row, so it gets the orange highlight.
+.settings-keybinder.css-skin.css-skin {
+	&:selected {
+		background-color: $css-orange;
+	}
+}
+
+.settings-keybinder__title.css-skin {
+	.settings-keybinder:selected & {
+		color: $css-orange-text;
+		text-shadow: none;
+	}
+}
+
+.settings-keybinder__container.css-skin.css-skin {
+	width: 220px;
+	min-width: 0px;
+	height: 100%;
+	padding: 0px;
+	horizontal-align: right;
+	border-radius: 0;
+	border: 0px none;
+	background-color: none;
+	box-shadow: none;
+	animation-name: none;
+
+	&:hover {
+		background-color: rgba(255, 255, 255, 0.06);
+		border: 0px none;
+	}
+}
+
+.settings-keybinder__key-container.css-skin.css-skin {
+	horizontal-align: left;
+	vertical-align: center;
+}
+
+.settings-keybinder__key.css-skin.css-skin {
+	@include css-text(13px);
+	margin: 0 8px;
+	horizontal-align: left;
+	text-align: left;
+
+	.settings-keybinder:selected & {
+		color: $css-orange-text;
+		text-shadow: none;
+	}
+}
+
+.settings-keybinder__clear.css-skin.css-skin {
+	width: 14px;
+	height: 14px;
+	horizontal-align: right;
+	vertical-align: center;
+	margin: 0 6px;
+}

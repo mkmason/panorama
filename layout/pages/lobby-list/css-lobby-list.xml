@@ -8,7 +8,10 @@
 	</scripts>
 
 	<Panel class="mainmenu__page csslobbies-page" onload="CssLobbyListHandler.onLoad()">
-		<Panel class="csslobbies">
+		<!-- Popup window over the CS:S menu: clicking anywhere outside the window closes it, like its X. The window
+		     catches its own clicks (hittest + empty onactivate) so they don't fall through to this backdrop. -->
+		<Button class="css-window-backdrop" onactivate="$.DispatchEvent('MainMenu_ClosePage');" />
+		<Panel class="csslobbies css-window" hittest="true" onactivate="">
 			<!-- Title bar -->
 			<Panel class="csslobbies__titlebar">
 				<Label class="csslobbies__title" text="Lobbies" />

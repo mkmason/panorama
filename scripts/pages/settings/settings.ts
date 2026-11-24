@@ -22,6 +22,13 @@ export class SettingsHandler {
 	};
 
 	currentInfo: string = null;
+
+	/**
+	 * Running in the CS:S-styled Options window (layout/pages/settings/css-settings.xml) instead of the normal Settings
+	 * page. Same tabs and settings; the nav is a tab row with one row of section links per tab, and the loaded pages
+	 * get CS:S skin classes (see applyCssSkin).
+	 */
+	readonly cssSkin = Boolean($.GetContextPanel().FindChildTraverse('CssOptions'));
 	spacerHeight = 0;
 	shouldLimitScroll = false;
 
@@ -42,7 +49,10 @@ export class SettingsHandler {
 		);
 
 		// Save to file whenever the settings page gets closed
-		$.RegisterForUnhandledEvent('MainMenuPageHidden', (tab) => tab === 'Settings' && this.saveSettings());
+		$.RegisterForUnhandledEvent(
+			'MainMenuPageHidden',
+			(tab) => tab === (this.cssSkin ? 'CssSettings' : 'Settings') && this.saveSettings()
+		);
 
 		// Handle the settings save event
 		$.RegisterForUnhandledEvent('SettingsSave', () => this.saveSettings());
@@ -57,7 +67,7 @@ export class SettingsHandler {
 				if (this.activeTab !== 'SearchSettings')
 					this.setNavItemCollapsed(
 						this.activeTab,
-						$.persistentStorage.getItem('settings.collapseNav') ?? true
+						this.cssSkin || ($.persistentStorage.getItem('settings.collapseNav') ?? true)
 					);
 
 				// Hide the active tab
@@ -105,6 +115,8 @@ export class SettingsHandler {
 
 		// Setup all the events for all the children
 		this.initPanelsRecursive(newPanel);
+
+		if (this.cssSkin) this.applyCssSkin(newPanel);
 
 		const container = newPanel.FindChildTraverse('SettingsPageContainer');
 
@@ -202,7 +214,9 @@ export class SettingsHandler {
 				scrollOffset === 0
 			) {
 				// Would need do some crazy mapping over type unions here, fuck it
-				this.panels.nav.FindChildTraverse((SettingsTabs[tab] as any).children[child.id]).checked = true;
+				// Groups without a nav entry (no id, or an id missing from SettingsTabs' children) have no radio
+				const radio = this.panels.nav.FindChildTraverse((SettingsTabs[tab] as any).children[child.id]);
+				if (radio) radio.checked = true;
 				break;
 			}
 		}
@@ -226,9 +240,12 @@ export class SettingsHandler {
 			shouldCollapse = true;
 		}
 
+		// The CS:S window only ever shows the active tab's section links
+		if (this.cssSkin) shouldCollapse = true;
+
 		// Show the corresponding button icon
-		this.panels.navExpand.SetHasClass('hide', !shouldCollapse);
-		this.panels.navCollapse.SetHasClass('hide', shouldCollapse);
+		this.panels.navExpand?.SetHasClass('hide', !shouldCollapse);
+		this.panels.navCollapse?.SetHasClass('hide', shouldCollapse);
 
 		// Update all the items
 		Object.keys(SettingsTabs)
@@ -238,10 +255,12 @@ export class SettingsHandler {
 
 	// Set the collapsed state of a nav item
 	setNavItemCollapsed(tab: SettingsTabWithoutSearch, shouldCollapse: boolean) {
-		this.panels.nav
-			.FindChild(SettingsTabs[tab].radioid)
-			.FindChildrenWithClassTraverse('settings-nav__subsection')[0]
-			.SetHasClass('settings-nav__subsection--hidden', shouldCollapse);
+		// Normal page: the subsection sits inside the tab's nav radio. CS:S window: its own row, `<radioid>Sub`.
+		const radioID = SettingsTabs[tab].radioid;
+		const subsection =
+			this.panels.nav.FindChildTraverse(radioID)?.FindChildrenWithClassTraverse('settings-nav__subsection')[0] ??
+			this.panels.nav.FindChildTraverse(`${radioID}Sub`);
+		subsection?.SetHasClass('settings-nav__subsection--hidden', shouldCollapse);
 	}
 
 	initPanelsRecursive(panel: GenericPanel) {
@@ -415,6 +434,92 @@ export class SettingsHandler {
 
 			search(group);
 		}
+	}
+
+	/**
+	 * Tag every panel of a loaded settings page for the CS:S skin (styles/pages/settings/css-settings.scss). The rules
+	 * match on these classes on the panel itself rather than descending from the window, since the pages and setting
+	 * components are separate layout files.
+	 */
+	applyCssSkin(page: GenericPanel) {
+		const tag = (panel: GenericPanel) => {
+			panel.AddClass('css-skin');
+			const parent = panel.GetParent();
+			if (panel.HasClass('TickBox')) panel.AddClass('css-skin-tickbox');
+			switch (panel.paneltype) {
+				case 'RadioButton':
+					if (parent?.HasClass('settings-enum__values')) panel.AddClass('css-skin-choice');
+					break;
+				case 'Button':
+					if (panel.HasClass('button')) panel.AddClass('css-skin-button');
+					break;
+				case 'DropDown': {
+					panel.AddClass('css-skin-dropdown');
+					// The open list is its own panel (re-parented by C++), so tag it and its items too
+					const menu = (panel as DropDown).AccessDropDownMenu?.();
+					if (menu) {
+						menu.AddClass('css-skin-menu');
+						for (const item of menu.Children()) item.AddClass('css-skin-menu-item');
+					}
+					break;
+				}
+				case 'Slider':
+					panel.AddClass('css-skin-slider');
+					break;
+				case 'TextEntry':
+					panel.AddClass('css-skin-textentry');
+					break;
+				case 'ToggleButton':
+					panel.AddClass('css-skin-check');
+					break;
+				case 'Label':
+					if (parent?.HasClass('css-skin-choice')) panel.AddClass('css-skin-choice-text');
+					else if (parent?.HasClass('css-skin-button')) panel.AddClass('css-skin-button-text');
+					break;
+			}
+		};
+
+		tag(page);
+		// Parents come before their children, so the Label checks above see their parent's tags
+		for (const child of traverseChildren(page)) tag(child);
+
+		// Dropdowns: every dropdown in a group (e.g. "Rendering") gets the width of the group's widest one, as in the
+		// CS:S options dialog; ones outside a group just fit their own options
+		for (const group of page.FindChildrenWithClassTraverse('settings-group')) {
+			const dropdowns = group.FindChildrenWithClassTraverse<DropDown>('css-skin-dropdown');
+			if (dropdowns.length === 0) continue;
+			const width = Math.max(...dropdowns.map((dropdown) => this.cssDropdownWidth(dropdown)));
+			for (const dropdown of dropdowns) {
+				this.setCssDropdownWidth(dropdown, width);
+				dropdown.AddClass('css-skin-sized');
+			}
+		}
+		for (const dropdown of page.FindChildrenWithClassTraverse<DropDown>('css-skin-dropdown')) {
+			if (!dropdown.HasClass('css-skin-sized'))
+				this.setCssDropdownWidth(dropdown, this.cssDropdownWidth(dropdown));
+		}
+	}
+
+	/**
+	 * CS:S skin: the width a dropdown needs for its longest option (+ room for padding and the arrow). The options
+	 * aren't laid out while the list is closed, so estimate from character count at the skin's 13px font. Lists that
+	 * are filled later from code (e.g. gamemode lists) count as the minimum.
+	 */
+	cssDropdownWidth(dropdown: DropDown): number {
+		const menu = dropdown.AccessDropDownMenu?.();
+		const options = (menu?.Children() ?? dropdown.Children()).filter((child) => child.paneltype === 'Label');
+		const longest = Math.max(0, ...options.map((option) => ((option as Label).text ?? '').length));
+		const CHAR_WIDTH = 7.5;
+		const BUFFER = 44; // label padding + arrow
+		const MIN_WIDTH = 90;
+		return Math.max(MIN_WIDTH, Math.ceil(longest * CHAR_WIDTH + BUFFER));
+	}
+
+	/** Set a dropdown's field and its open list to the same width (the list otherwise grew far wider). */
+	setCssDropdownWidth(dropdown: DropDown, width: number) {
+		dropdown.style.width = `${width}px`;
+		const menu = dropdown.AccessDropDownMenu?.();
+		if (menu) menu.style.width = `${width}px`;
 	}
 
 	saveSettings() {

@@ -10,10 +10,10 @@
 	<!-- A layout root allows only ONE top-level panel (and it must NOT have an id — that's set by the code
 	     that loads the layout), so this wrapper (default overlap flow) holds the page AND the top-10 popup,
 	     letting the popup overlay the page. -->
-	<Panel style="width: 100%; height: 100%;">
+	<Panel style="width: 100%; height: 100%;" onload="StatsHandler.onLoad()">
 
 	<!-- Extra right padding (4-value: top right bottom left) keeps content clear of the collapsed right-side drawer handle. -->
-	<Panel class="mainmenu__page" style="flow-children: down; padding: 20px 76px 40px 40px;" onload="StatsHandler.onLoad()">
+	<Panel id="StatsNormalRoot" class="mainmenu__page" style="flow-children: down; padding: 20px 76px 40px 40px;">
 		<!-- Header: title + preload/rescan -->
 		<Panel style="flow-children: right; margin-bottom: 10px; width: 100%;">
 			<Image src="file://{images}/stats.svg" textureheight="40" style="width: 40px; height: 40px; margin-right: 14px; vertical-align: center;" />
@@ -53,32 +53,116 @@
 		<Panel id="StatsContent" style="flow-children: right; width: 100%; height: fill-parent-flow(1); overflow: squish clip;" />
 	</Panel>
 
+	<!-- CS:S skin (shown instead of StatsNormalRoot while the CS:S main menu is active, see StatsHandler.applySkin):
+	     a popup window over the CS:S menu with Overview and Maps tabs. Same data and actions; the dynamic parts are
+	     built in stats.ts (renderCss*). Clicking outside the window closes the page, like its X. -->
+	<Panel id="StatsCssRoot" class="mainmenu__page cssstats-page" style="visibility: collapse;">
+		<Button class="css-window-backdrop" onactivate="$.DispatchEvent('MainMenu_ClosePage');" />
+		<Panel class="cssstats css-window" hittest="true" onactivate="">
+			<Panel class="cssstats__titlebar">
+				<Label class="cssstats__title" text="Stats" />
+				<Button class="cssstats__close" onactivate="$.DispatchEvent('MainMenu_ClosePage');">
+					<Image class="cssstats__close-icon" src="file://{images}/close.svg" textureheight="24" />
+				</Button>
+			</Panel>
+
+			<!-- Player lookup -->
+			<Panel class="cssstats__toprow">
+				<Label class="cssstats__label" text="Player:" />
+				<Panel class="cssstats__field">
+					<TextEntry id="StatsCssUserSearch" class="cssstats__entry" maxchars="120" placeholder="Steam ID / name / profile URL (blank = you)" ontextentrysubmit="StatsHandler.searchUser()" />
+				</Panel>
+				<Button class="cssstats__btn" onactivate="StatsHandler.searchUser()">
+					<Label class="cssstats__btn-text" text="View" />
+				</Button>
+				<Button class="cssstats__btn" onactivate="StatsHandler.resetUser()">
+					<Label class="cssstats__btn-text" text="Me" />
+				</Button>
+				<Label id="StatsCssUserStatus" class="cssstats__userstatus" text="" />
+			</Panel>
+
+			<!-- Mode / style / map-type dropdowns (options filled in stats.ts) -->
+			<Panel class="cssstats__toprow">
+				<Label class="cssstats__label" text="Mode:" />
+				<DropDown id="StatsCssMode" class="dropdown cssstats__dropdown cssstats__dropdown--mode" menuclass="dropdown-menu cssstats__menu" oninputsubmit="StatsHandler.cssOnModePicked()" />
+				<Label id="StatsCssStyleLabel" class="cssstats__label cssstats__label--gap" text="Style:" />
+				<DropDown id="StatsCssStyle" class="dropdown cssstats__dropdown" menuclass="dropdown-menu cssstats__menu" oninputsubmit="StatsHandler.cssOnStylePicked()" />
+				<Label class="cssstats__label cssstats__label--gap" text="Maps:" />
+				<DropDown id="StatsCssFilter" class="dropdown cssstats__dropdown cssstats__dropdown--filter" menuclass="dropdown-menu cssstats__menu" oninputsubmit="StatsHandler.cssOnFilterPicked()" />
+			</Panel>
+
+			<!-- Tabs -->
+			<Panel class="cssstats__tabs">
+				<RadioButton id="StatsCssTabOverview" class="cssstats__tab" group="StatsCssTabs" selected="true" onactivate="StatsHandler.cssShowTab('overview')">
+					<Label class="cssstats__tab-label" text="Overview" />
+				</RadioButton>
+				<RadioButton id="StatsCssTabMaps" class="cssstats__tab" group="StatsCssTabs" onactivate="StatsHandler.cssShowTab('maps')">
+					<Label class="cssstats__tab-label" text="Maps" />
+				</RadioButton>
+			</Panel>
+
+			<Panel class="cssstats__body">
+				<Label id="StatsCssStatus" class="cssstats__status" text="Loading&#8230;" />
+				<Panel id="StatsCssOverview" class="cssstats__overview" />
+				<Panel id="StatsCssMaps" class="cssstats__maps" style="visibility: collapse;" />
+			</Panel>
+
+			<!-- Bottom bar -->
+			<Panel class="cssstats__bottom">
+				<Button id="StatsCssPreloadToggle" class="cssstats__check" onactivate="StatsHandler.togglePreload()" onmouseover="UiToolkitAPI.ShowTextTooltip('StatsCssPreloadToggle', 'Pre-scan this page in the background when the main menu loads so it opens instantly')" onmouseout="UiToolkitAPI.HideTextTooltip()">
+					<Panel class="cssstats__check-box">
+						<Label class="cssstats__check-tick" text="&#10003;" />
+					</Panel>
+					<Label id="StatsCssPreloadLabel" class="cssstats__check-label" text="Preload on menu load" />
+				</Button>
+				<Panel class="w-fill" />
+				<Button class="cssstats__btn" onactivate="StatsHandler.rescan()">
+					<Label class="cssstats__btn-text" text="Rescan" />
+				</Button>
+				<Button class="cssstats__btn cssstats__btn--default" onactivate="$.DispatchEvent('MainMenu_ClosePage');">
+					<Label class="cssstats__btn-text" text="Close" />
+				</Button>
+			</Panel>
+		</Panel>
+	</Panel>
+
 	<!-- Top-10 leaderboard popup: opened by clicking a map name in the tier list; overlays the whole page.
 	     Sibling of the page inside the root wrapper (default overlap flow). Hidden via style.visibility,
-	     toggled from stats.ts (reliable, unlike a `visible` attribute). Rows are built in TS. -->
-	<Panel id="StatsLbPopup" style="width: 100%; height: 100%; visibility: collapse;">
-		<Button id="StatsLbBackdrop" onactivate="StatsHandler.closeMapLeaderboard()" style="width: 100%; height: 100%; background-color: rgba(0, 0, 0, 0.72);" />
+	     toggled from stats.ts (reliable, unlike a `visible` attribute). Rows are built in TS.
+	     Styled by classes (styles/pages/css-stats.scss, .statslb) so the CS:S menu can reskin it: stats.ts adds the
+	     CS:S modifier class to #StatsLbPopup while the CS:S menu is active. -->
+	<Panel id="StatsLbPopup" class="statslb" style="visibility: collapse;">
+		<Button id="StatsLbBackdrop" class="statslb__backdrop" onactivate="StatsHandler.closeMapLeaderboard()" />
 		<!-- hittest + empty onactivate: catch clicks on the card's own background / labels so they don't fall
 		     through to the full-screen backdrop button behind it (which closes the popup). Only a click that
 		     misses the card entirely reaches the backdrop. Same trick as the gallery / background selector. -->
-		<Panel hittest="true" onactivate="" style="width: 1080px; height: 92%; horizontal-align: center; vertical-align: center; flow-children: right; padding: 22px 24px; background-color: #12161d; border: 1px solid #2a3340; border-radius: 10px;">
-			<!-- Left column: the map's screenshots as a vertical strip. Filled from TS via SetImage on the
-			     map's CDN urls (already in the local scan cache); collapsed when the map has no images. -->
-			<Panel id="StatsLbImages" style="flow-children: down; width: 256px; height: 100%; margin-right: 20px; overflow: squish scroll;" />
-			<!-- Right column: the leaderboard title + top-10 / group-cutoff list. -->
-			<Panel style="flow-children: down; width: fill-parent-flow(1); height: 100%; overflow: squish clip;">
-				<Panel style="flow-children: right; width: 100%; margin-bottom: 2px;">
-					<Label id="StatsLbTitle" text="" style="width: fill-parent-flow(1); font-size: 22px; font-weight: bold; color: #ffffff; vertical-align: center; text-overflow: ellipsis;" />
-					<Button id="StatsLbRefresh" class="button" onactivate="StatsHandler.refreshCurrentMap()" onmouseover="UiToolkitAPI.ShowTextTooltip('StatsLbRefresh', 'Re-fetch this leaderboard from the server (ignores the cached copy)')" onmouseout="UiToolkitAPI.HideTextTooltip()" style="height: 30px; padding: 0 14px; margin-right: 8px; vertical-align: center; background-color: #232a33; border-radius: 6px;">
-						<Label text="Refresh" style="font-size: 13px; color: #cdd5df; vertical-align: center;" />
-					</Button>
-					<Button onactivate="StatsHandler.closeMapLeaderboard()" style="width: 30px; height: 30px; vertical-align: center; background-color: #232a33; border-radius: 6px;">
-						<Label text="✕" style="font-size: 15px; color: #cdd5df; horizontal-align: center; vertical-align: center;" />
-					</Button>
+		<Panel class="statslb__card" hittest="true" onactivate="">
+			<!-- CS:S skin only: window title bar -->
+			<Panel class="statslb__cssbar">
+				<Label class="statslb__cssbar-title" text="Leaderboard" />
+				<Button class="statslb__cssbar-close" onactivate="StatsHandler.closeMapLeaderboard()">
+					<Image class="statslb__cssbar-close-icon" src="file://{images}/close.svg" textureheight="24" />
+				</Button>
+			</Panel>
+			<Panel class="statslb__content">
+				<!-- Left column: the map's screenshots as a vertical strip. Filled from TS via SetImage on the
+				     map's CDN urls (already in the local scan cache); collapsed when the map has no images. -->
+				<Panel id="StatsLbImages" class="statslb__images" />
+				<!-- Right column: the leaderboard title + top-10 / group-cutoff list. -->
+				<Panel class="statslb__main">
+					<Panel class="statslb__head">
+						<Label id="StatsLbTitle" class="statslb__title" text="" />
+						<Button id="StatsLbRefresh" class="statslb__refresh" onactivate="StatsHandler.refreshCurrentMap()" onmouseover="UiToolkitAPI.ShowTextTooltip('StatsLbRefresh', 'Re-fetch this leaderboard from the server (ignores the cached copy)')" onmouseout="UiToolkitAPI.HideTextTooltip()">
+							<Label class="statslb__refresh-text" text="Refresh" />
+						</Button>
+						<Button class="statslb__close" onactivate="StatsHandler.closeMapLeaderboard()">
+							<Label class="statslb__close-text" text="✕" />
+						</Button>
+					</Panel>
+					<Label id="StatsLbSubtitle" class="statslb__subtitle" text="" />
+					<Label id="StatsLbStatus" class="statslb__status" text="" style="visibility: collapse;" />
+					<Panel id="StatsLbList" class="statslb__list" />
 				</Panel>
-				<Label id="StatsLbSubtitle" text="" style="font-size: 13px; color: #8a93a0; margin-bottom: 12px;" />
-				<Label id="StatsLbStatus" text="" style="font-size: 14px; color: #8a93a0; margin-bottom: 6px; visibility: collapse;" />
-				<Panel id="StatsLbList" style="flow-children: down; width: 100%; height: fill-parent-flow(1); overflow: squish scroll;" />
 			</Panel>
 		</Panel>
 	</Panel>

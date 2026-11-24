@@ -884,9 +884,16 @@ $drawer-width: 768px;
 		visibility: collapse;
 	}
 
-	// Reclaim the 50px the rightnav strip reserved on the right.
+	// Reclaim the 50px the rightnav strip reserved on the right, and the top nav's 80px: otherwise the CS:S popup
+	// pages (and their click-outside-to-close backdrop) start 80px down and the top strip ignores clicks.
 	.mainmenu__content {
 		margin-right: 0;
+		margin-top: 0;
+	}
+
+	// Keep the CS:S menu where it sat before the top margin went away (it's centred in a now 80px taller box)
+	.cssmenu {
+		margin-top: 80px;
 	}
 }
 
@@ -1075,5 +1082,241 @@ $drawer-width: 768px;
 	&__button-text {
 		font-size: 14px;
 		color: rgba(255, 255, 255, 0.85);
+	}
+}
+
+// CS:S title bar inside the background selector window: hidden except in the CS:S menu (below)
+.bgselector__cssbar {
+	visibility: collapse;
+}
+
+// ─── Background selector, CS:S menu ──────────────────────────────────────────
+// Same skin as the CS:S map selector / Options window: warm olive-grey beveled window with a title bar, sunken
+// fields, raised buttons, engraved text. No orange at rest; the active preset reads as pushed in.
+$bg-css-window: rgba(125, 124, 121);
+$bg-css-panel: rgba(91, 90, 88);
+$bg-css-field: rgba(20, 20, 16, 0.55);
+$bg-css-text: #ecece3;
+$bg-css-text-dim: #c2c2b5;
+$bg-css-text-disabled: #8f8f84;
+$bg-css-dark: rgba(0, 0, 0, 0.45);
+$bg-css-light: rgba(255, 255, 255, 0.24);
+$bg-css-engrave: 0px 1px 0px rgba(0, 0, 0, 0.4);
+
+@mixin bg-css-raised {
+	border-top: 1px solid $bg-css-light;
+	border-left: 1px solid $bg-css-light;
+	border-right: 1px solid $bg-css-dark;
+	border-bottom: 1px solid $bg-css-dark;
+	border-radius: 0;
+}
+
+@mixin bg-css-sunken {
+	border-top: 1px solid $bg-css-dark;
+	border-left: 1px solid $bg-css-dark;
+	border-right: 1px solid $bg-css-light;
+	border-bottom: 1px solid $bg-css-light;
+	border-radius: 0;
+}
+
+@mixin bg-css-text($size: 13px) {
+	font-family: $font;
+	font-size: $size;
+	font-weight: normal;
+	letter-spacing: 0px;
+	text-transform: none;
+	color: $bg-css-text;
+	text-shadow: $bg-css-engrave;
+}
+
+.mainmenu--css .bgselector {
+	&__backdrop {
+		background-color: rgba(0, 0, 0, 0.35);
+	}
+
+	&__window {
+		width: 620px;
+		padding: 4px 4px 12px 4px;
+		background-color: $bg-css-window;
+		@include bg-css-raised;
+		box-shadow: 0 4px 24px 2px rgba(0, 0, 0, 0.75);
+	}
+
+	&__cssbar {
+		visibility: visible;
+		flow-children: right;
+		width: 100%;
+		height: 30px;
+		padding: 0 4px 0 10px;
+		margin-bottom: 10px;
+		border-bottom: 1px solid $bg-css-dark;
+	}
+
+	&__cssbar-title {
+		@include bg-css-text(16px);
+		width: fill-parent-flow(1);
+		font-weight: bold;
+		vertical-align: center;
+	}
+
+	&__cssbar-close {
+		width: 24px;
+		height: 24px;
+		padding: 4px;
+		vertical-align: center;
+		border-radius: 2px;
+		transition: background-color 0.1s ease-in-out 0s;
+
+		&:hover {
+			background-color: $red;
+			sound: 'UIPanorama.ButtonRollover';
+		}
+	}
+
+	&__cssbar-close-icon {
+		width: 100%;
+		height: 100%;
+		wash-color: $bg-css-text;
+	}
+
+	// The title bar names the window
+	&__title {
+		visibility: collapse;
+	}
+
+	&__hint,
+	&__status,
+	&__presets-label,
+	&__inputrow,
+	&__presets,
+	&__nekogrid,
+	&__probe,
+	&__actions {
+		margin-left: 10px;
+		margin-right: 10px;
+	}
+
+	&__hint {
+		@include bg-css-text(13px);
+		width: fill-parent-flow(1);
+		color: $bg-css-text-dim;
+		margin-bottom: 10px;
+	}
+
+	&__presets-label {
+		@include bg-css-text(14px);
+		font-weight: bold;
+		margin-bottom: 6px;
+	}
+
+	&__input {
+		@include bg-css-text(13px);
+		text-shadow: none;
+		height: 26px;
+		padding: 4px 6px 0px 6px;
+		background-color: $bg-css-field;
+		@include bg-css-sunken;
+		box-shadow: none;
+
+		#PlaceholderText {
+			@include bg-css-text(13px);
+			color: $bg-css-text-disabled;
+			text-shadow: none;
+		}
+
+		&:focus #PlaceholderText,
+		&.HasInput #PlaceholderText {
+			opacity: 0;
+		}
+	}
+
+	// Apply / Search, preset chips and the bottom buttons: raised CS:S buttons
+	&__apply,
+	&__button,
+	&__preset {
+		background-color: $bg-css-window;
+		@include bg-css-raised;
+		transition: background-color 0.1s ease-in-out 0s;
+
+		&:hover {
+			background-color: rgba(140, 139, 135);
+			sound: 'UIPanorama.ButtonRollover';
+		}
+
+		&:active {
+			@include bg-css-sunken;
+		}
+	}
+
+	&__apply {
+		height: 26px;
+		padding: 0 18px;
+	}
+
+	&__button {
+		height: 28px;
+		padding: 0 18px;
+		margin-left: 8px;
+	}
+
+	&__preset {
+		height: 24px;
+		padding: 0 10px;
+		margin: 0 4px 4px 0;
+
+		// The current background: pushed in, like a selected Options choice
+		&--active,
+		&--active:hover {
+			background-color: rgba(76, 76, 74);
+			@include bg-css-sunken;
+		}
+	}
+
+	&__apply-text,
+	&__button-text,
+	&__preset-text {
+		@include bg-css-text(13px);
+		vertical-align: center;
+	}
+
+	&__preset--active .bgselector__preset-text {
+		color: $white;
+	}
+
+	&__button-text {
+		font-weight: normal;
+	}
+
+	&__status {
+		@include bg-css-text(13px);
+		color: #b9e29a;
+
+		&--error {
+			color: #f0a196;
+		}
+	}
+
+	// Preview + result thumbnails sit in sunken frames
+	&__probe {
+		width: fill-parent-flow(1);
+		border-radius: 0;
+		background-color: $bg-css-field;
+		@include bg-css-sunken;
+	}
+
+	&__nekogrid {
+		width: fill-parent-flow(1);
+		padding: 4px;
+		background-color: $bg-css-panel;
+		@include bg-css-sunken;
+	}
+
+	&__nekoresult {
+		border-radius: 0;
+		border: 1px solid $bg-css-dark;
+
+		&:hover {
+			border-color: $bg-css-text;
+		}
 	}
 }

@@ -297,3 +297,166 @@ $main-padding: 13px;
 		align: center center;
 	}
 }
+
+// ─── Classic style (Interface > Leaderboard Style) ────────────────────────────
+// This fork's pre-merge 0.10 leaderboard look, ported from its old leaderboards.scss/entry.scss: transparent panel,
+// Global/Local/Lobby tabs + Top 10/Around/Friends sub-tabs, a dark column header and a striped list. Runs on the same
+// paginated records requests as the new style (see LeaderboardsHandler.applyStyleSetting / setClassicFilter).
+//
+// Each region carries its own modifier class instead of nesting under one root class: the root Leaderboards panel is
+// declared by the map selector / tab menu layouts, and Panorama didn't apply `.root-class .child` rules across that
+// layout boundary in-game.
+
+// Hidden unless Classic is on
+.leaderboard-classic-filters,
+.leaderboard-classic-header {
+	visibility: collapse;
+}
+
+// One content-sized box, like the old map selector (.mapselector-leaderboards__list + __list-wrapper) and tab menu.
+// Doubled class so it beats the tab menu's `.tab-menu-center__right Leaderboards { height: fill-parent-flow(1) }`.
+.leaderboards.leaderboards--classic {
+	height: fit-children;
+	vertical-align: top;
+	padding: 16px;
+	background-color: rgba(0, 0, 0, 0.6);
+	border: 0px;
+	border-radius: 0;
+	box-shadow: 0 0 16px 0 rgba(0, 0, 0, 0.5);
+}
+
+.leaderboard-radio--hidden {
+	visibility: collapse;
+}
+
+.leaderboard-classic-filters {
+	&--shown {
+		visibility: visible;
+		flow-children: right;
+		width: 100%;
+	}
+
+	&__subtypes {
+		margin-left: 8px;
+
+		&--hidden {
+			visibility: collapse;
+		}
+	}
+
+	&__spacer {
+		width: fill-parent-flow(1);
+	}
+
+	&__style-slot {
+		width: fit-children;
+		height: fit-children;
+		vertical-align: center;
+		margin-right: 8px;
+	}
+
+	// Track dropdown + sync button sit flush as one control, as in the pre-merge leaderboards.scss
+	// (.leaderboards__dropdown / __sync-button)
+	&__track {
+		width: 190px;
+		vertical-align: center;
+		border-top-right-radius: 0px;
+		border-bottom-right-radius: 0px;
+
+		& .DropDownIcon {
+			border-radius: 0px;
+		}
+	}
+
+	&__sync {
+		vertical-align: center;
+	}
+
+	&__sync-button {
+		height: $dropdown-button-height;
+		padding: 4px 8px;
+		border-top-left-radius: 0px;
+		border-bottom-left-radius: 0px;
+	}
+}
+
+// The map selector / tab menu StyleSelector while it sits in the Classic tab row. Doubled class to beat the
+// placement rules its home layouts give it (e.g. .tab-menu-center__style-selector's bottom margin).
+.style-selector.style-selector--in-leaderboard {
+	margin: 0px;
+	vertical-align: center;
+	horizontal-align: left;
+}
+
+.leaderboard-classic-header {
+	&--shown {
+		visibility: visible;
+		flow-children: right;
+		width: 100%;
+		margin-top: 16px;
+		padding: 4px 8px;
+		background-color: rgba(0, 0, 0, 0.4);
+		border: 1px solid rgba(0, 0, 0, 0.4);
+		border-bottom: 1px solid rgba(0, 0, 0, 0.3);
+	}
+
+	// Widths match .leaderboard-entry--classic's columns
+	&__item {
+		font-size: 14px;
+		vertical-align: center;
+	}
+
+	&__rank {
+		width: fill-parent-flow(0.1);
+	}
+
+	&__player {
+		width: fill-parent-flow(0.45);
+	}
+
+	&__time {
+		width: fill-parent-flow(0.25);
+	}
+
+	&__date {
+		width: fill-parent-flow(0.2);
+		text-align: right;
+	}
+}
+
+.leaderboard-times--classic {
+	// The old list area: a fixed 300px, i.e. one 10-row page (LeaderboardsHandler pages it 10 rows at a time)
+	height: 300px;
+	padding: 0px;
+
+	.leaderboard-times__content-frame {
+		border: 0px;
+		border-radius: 0;
+		background-color: rgba(0, 0, 0, 0.4);
+		box-shadow: none;
+	}
+
+	.leaderboard-times__list {
+		border: 1px solid rgba(0, 0, 0, 0.4);
+		border-top: 0px;
+	}
+
+	.leaderboard-times__empty,
+	.leaderboard-times__loading {
+		padding-bottom: 36px;
+	}
+}
+
+// Tab menu: full 20-row pages (with the page bar) instead of the map selector's 10-row box
+.leaderboard-times--classic.leaderboard-times--classic-paged {
+	height: 600px;
+}
+
+.leaderboard-bottom--classic {
+	height: fit-children;
+	padding: 6px 0px 0px 0px;
+}
+
+.leaderboard-bottom--collapsed {
+	visibility: collapse;
+}

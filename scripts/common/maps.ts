@@ -74,6 +74,65 @@ export function handlePlayMap(mapData: MapCacheAPI.MapData, gamemodeOverride: Ga
 	}
 }
 
+// Play/download requests (MapSelector_TryPlayMap / _DownloadMap) are handled by the main map selector's C++ panel,
+// which only exists once that page has loaded. Pages that play maps without it (the CS:S map selector, Stats) ask
+// the main menu to load it hidden (MainMenu_PreloadMapSelector) and send the request once it answers
+// (MainMenu_MapSelectorReady). Per script context, like all module state.
+let mapSelectorReady = false;
+let listeningForReady = false;
+let heldPlay: (() => void) | null = null;
+let heldPlayTimeout: uuid | null = null;
+const MAP_SELECTOR_READY_TIMEOUT = 5; // seconds before trying anyway
+
+function releaseHeldPlay() {
+	if (heldPlayTimeout != null) {
+		try {
+			$.CancelScheduled(heldPlayTimeout);
+		} catch {}
+		heldPlayTimeout = null;
+	}
+	const play = heldPlay;
+	heldPlay = null;
+	play?.();
+}
+
+/**
+ * handlePlayMap, but safe to call before the main map selector has ever been opened: the request is held until
+ * the selector has loaded (it's loaded hidden on demand), then sent. Uses fresh cache data, since a caller's
+ * snapshot can still say "not downloaded" for a map that has since been installed.
+ */
+export function handlePlayMapWhenReady(mapData: MapCacheAPI.MapData, gamemodeOverride: Gamemode = null) {
+	if (!listeningForReady) {
+		listeningForReady = true;
+		$.RegisterForUnhandledEvent('MainMenu_MapSelectorReady', () => {
+			mapSelectorReady = true;
+			releaseHeldPlay();
+		});
+	}
+
+	const play = () => {
+		let fresh: MapCacheAPI.MapData | null = null;
+		try {
+			fresh = MapCacheAPI.GetMapData(mapData.staticData.id);
+		} catch {
+			fresh = null;
+		}
+		if (fresh) mapData.mapFileExists = fresh.mapFileExists;
+		handlePlayMap(fresh ?? mapData, gamemodeOverride);
+	};
+
+	if (mapSelectorReady) {
+		play();
+		return;
+	}
+	heldPlay = play;
+	$.DispatchEvent('MainMenu_PreloadMapSelector');
+	heldPlayTimeout ??= $.Schedule(MAP_SELECTOR_READY_TIMEOUT, () => {
+		heldPlayTimeout = null;
+		releaseHeldPlay();
+	});
+}
+
 export enum MapListType {
 	APPROVED = 0,
 	SUBMISSIONS = 1

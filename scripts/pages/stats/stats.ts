@@ -8,7 +8,7 @@ import { MapStatus } from 'common/web/enums/map-status.enum';
 import { GamemodeDefaultUIStyle, GamemodeStyles } from 'common/web/maps/gamemode-styles.map';
 import { GamemodeInfo } from 'common/gamemode';
 import { getTrack, getUserMapDataTrack } from 'common/leaderboard';
-import { handlePlayMap, MapUserCompletions } from 'common/maps';
+import { handlePlayMapWhenReady, MapUserCompletions } from 'common/maps';
 import { CompletionGroup } from 'common/web/enums/completion-group.enum';
 import { RANK_GROUP_COUNT, getCompletionGroup, getRankGroupEnds } from 'common/web/consts/rank-groups.const';
 
@@ -64,6 +64,17 @@ let userGen = 0; // bumped on each lookup so a stale in-flight fetch (or reset) 
 // The cards persist across re-renders (only their contents are refilled) to avoid the solid card
 // boxes flashing over the transparent/blurred in-game background on every gamemode/style change.
 let curStat: ModeStat | null = null;
+
+// CS:S skin (the CS:S main menu's Stats window, #StatsCssRoot): which tab is showing, which skin was last rendered
+// (so a menu-style switch while the page exists re-renders it), and the selected map row in the Maps tab.
+type CssTab = 'overview' | 'maps';
+let cssTab: CssTab = 'overview';
+let renderedSkin: boolean | null = null;
+let cssSelectedKey: string | null = null;
+let cssSelectedRow: Panel | null = null;
+const CSS_BACKGROUND_MODE = 2; // main-menu.ts BackgroundMode.CSS
+const CSS_FILTERS: RankFilter[] = ['ranked', 'unranked', 'both'];
+const CSS_FILTER_LABELS: Record<RankFilter, string> = { ranked: 'Ranked', unranked: 'Unranked', both: 'Both' };
 let leftCard: Panel | null = null;
 let rightCard: Panel | null = null;
 
@@ -95,8 +106,19 @@ interface RankResult {
 	groups: number[];
 }
 const EMPTY_RANK: RankResult = {
-	wr: 0, top10: 0, avgRank: 0, avgPct: null, pctPending: false,
-	ranked: 0, noEntry: 0, errors: 0, targets: 0, elapsed: 0, sumRank: 0, sumPct: 0, pctCount: 0,
+	wr: 0,
+	top10: 0,
+	avgRank: 0,
+	avgPct: null,
+	pctPending: false,
+	ranked: 0,
+	noEntry: 0,
+	errors: 0,
+	targets: 0,
+	elapsed: 0,
+	sumRank: 0,
+	sumPct: 0,
+	pctCount: 0,
 	groups: [0, 0, 0, 0, 0, 0]
 };
 
@@ -145,6 +167,10 @@ let perMapRank: Record<string, PerMapRank> = {};
 // (local map cache) and remote PBs (fetched on search) supply the target list, both already available.
 const STATS_CACHE_VERSION = 1; // bump to invalidate old caches when the PerMapRank shape changes
 const STATS_CACHE_PREFIX = 'stats.cache.'; // + viewed user id
+// Per-map "rank/total" items for the map selector list's group icons (see writeMapGroupIndex). Keep the prefix in
+// sync with map-entry.ts. writtenMapGroups remembers what's been written this session, to skip unchanged entries.
+const MAP_GROUP_PREFIX = 'stats.mapGroup.';
+const writtenMapGroups: Record<string, string> = {};
 interface StatsCache {
 	v: number;
 	ts: number; // ms epoch of the last FULL scan (drives the "Updated Xm ago" line)
@@ -287,6 +313,8 @@ class StatsHandler {
 		// The page may be pre-created (hidden) before the map cache is ready, in which case its
 		// initial scan finds nothing. Re-scan when the page is actually shown if we have no maps yet.
 		$.RegisterForUnhandledEvent('MainMenuPageShown', (page: string) => {
+			// The menu style may have changed since this page was built (CS:S <-> normal): switch shells + redraw
+			if (page === 'Stats' && this.applySkin() && scanCache) this.renderShell();
 			if (page === 'Stats' && !scanCache && !scanning) {
 				$.Msg('[Stats] MainMenuPageShown(Stats): no cache yet, kicking a scan');
 				this.scan();
@@ -307,6 +335,7 @@ class StatsHandler {
 	// PanelLoaded/onPanelLoad hook which runs too early and stalled the chunked scan).
 	onLoad() {
 		$.Msg(`[Stats] onLoad: scanCache=${scanCache ? scanCache.length + ' maps' : 'none'}, scanning=${scanning}`);
+		this.applySkin();
 		this.updatePreloadLabel();
 		if (scanCache) this.buildAll();
 		else if (!scanning) this.scan();
@@ -337,6 +366,7 @@ class StatsHandler {
 
 	updatePreloadLabel() {
 		const on = this.preloadEnabled();
+		$<Panel>('#StatsCssPreloadToggle')?.SetHasClass('cssstats__check--on', on);
 		const lbl = $<Label>('#StatsPreloadLabel');
 		if (lbl) lbl.text = on ? 'Preload: On' : 'Preload: Off';
 		const btn = $<Panel>('#StatsPreloadToggle');
@@ -345,6 +375,424 @@ class StatsHandler {
 				btn.style.backgroundColor = on ? '#1c2b30' : '#232a33';
 			} catch {}
 		}
+	}
+
+	//#endregion
+
+	//#region CS:S skin
+
+	/** Whether the CS:S main menu is active, which shows the CS:S Stats window instead of the normal page. */
+	isCss(): boolean {
+		return Number($.persistentStorage.getItem('settings.mainMenuBackground')) === CSS_BACKGROUND_MODE;
+	}
+
+	/** Element id for the active skin: the CS:S shell's copies are named StatsCss* instead of Stats*. */
+	sid(id: string): string {
+		return this.isCss() ? id.replace(/^Stats/, 'StatsCss') : id;
+	}
+
+	/** Show the shell for the current menu style. Returns true if it differs from what was last rendered. */
+	applySkin(): boolean {
+		const css = this.isCss();
+		const normal = $<Panel>('#StatsNormalRoot');
+		const cssRoot = $<Panel>('#StatsCssRoot');
+		try {
+			if (normal) normal.style.visibility = css ? 'collapse' : 'visible';
+			if (cssRoot) cssRoot.style.visibility = css ? 'visible' : 'collapse';
+		} catch {}
+		const changed = renderedSkin !== null && renderedSkin !== css;
+		renderedSkin = css;
+		return changed;
+	}
+
+	/** Redraw every rendered part (after a skin switch); data and scans are untouched. */
+	renderShell() {
+		leftCard = null;
+		rightCard = null;
+		this.renderFilter();
+		this.renderBar();
+		this.renderContent();
+		this.updateViewLabel();
+		this.updatePreloadLabel();
+	}
+
+	/** Fill a CS:S dropdown with (id, text, value) options and select one, without firing its submit event. */
+	cssFillDropdown(id: string, options: { key: string; text: string; value: number }[], selectedKey: string) {
+		const dd = $<DropDown>(`#${id}`);
+		if (!dd) return;
+		dd.RemoveAllOptions();
+		for (const o of options) {
+			const label = $.CreatePanel('Label', dd, `${id}_${o.key}`, { text: o.text });
+			label.SetAttributeInt('value', o.value);
+			dd.AddOption(label);
+		}
+		if (options.some((o) => o.key === selectedKey)) dd.SetSelected(`${id}_${selectedKey}`);
+		dd.enabled = options.length > 1;
+
+		// The open list otherwise spans the whole screen: match it to the field's width (styles/pages/css-stats.scss)
+		const widths: Record<string, number> = { StatsCssMode: 200, StatsCssStyle: 160, StatsCssFilter: 120 };
+		const menu = dd.AccessDropDownMenu?.();
+		if (menu && widths[id]) menu.style.width = `${widths[id]}px`;
+	}
+
+	cssSelectedValue(id: string): number | null {
+		const v = $<DropDown>(`#${id}`)?.GetSelected()?.GetAttributeInt('value', -999);
+		return v == null || v === -999 ? null : v;
+	}
+
+	cssOnModePicked() {
+		const v = this.cssSelectedValue('StatsCssMode');
+		if (v != null && v !== selectedMode) this.selectMode(v as Gamemode);
+	}
+
+	cssOnStylePicked() {
+		const v = this.cssSelectedValue('StatsCssStyle');
+		if (v != null && v !== selectedStyle) this.setStyle(v as Style);
+	}
+
+	cssOnFilterPicked() {
+		const v = this.cssSelectedValue('StatsCssFilter');
+		if (v != null && CSS_FILTERS[v] && CSS_FILTERS[v] !== rankFilter) this.setRank(CSS_FILTERS[v]);
+	}
+
+	cssModeKey(gm: Gamemode): string {
+		return gm === ALL_MODES ? 'all' : `${gm}`;
+	}
+
+	cssRenderModeDropdown() {
+		const options: { key: string; text: string; value: number }[] = [];
+		if (available.length > 0) options.push({ key: 'all', text: 'All gamemodes', value: ALL_MODES });
+		for (const gm of available)
+			options.push({
+				key: `${gm}`,
+				text: $.Localize(GamemodeInfo.get(gm)?.i18n ?? '') || `Mode ${gm}`,
+				value: gm
+			});
+		this.cssFillDropdown('StatsCssMode', options, selectedMode == null ? '' : this.cssModeKey(selectedMode));
+	}
+
+	cssRenderFilterDropdown() {
+		this.cssFillDropdown(
+			'StatsCssFilter',
+			CSS_FILTERS.map((f, i) => ({ key: f, text: CSS_FILTER_LABELS[f], value: i })),
+			rankFilter
+		);
+	}
+
+	cssRenderStyleDropdown() {
+		const styles =
+			selectedMode == null || selectedMode === ALL_MODES ? [] : [...(GamemodeStyles.get(selectedMode) ?? [])];
+		if (styles.length === 0) {
+			// "All" view: each mode at its own default style
+			this.cssFillDropdown('StatsCssStyle', [{ key: 'default', text: 'Default', value: -1 }], 'default');
+			return;
+		}
+		this.cssFillDropdown(
+			'StatsCssStyle',
+			styles.map((st) => ({ key: `${st}`, text: styleEnglishName(st), value: st })),
+			`${selectedStyle ?? styles[0]}`
+		);
+	}
+
+	cssShowTab(tab: CssTab) {
+		cssTab = tab;
+		this.cssApplyTab();
+	}
+
+	cssApplyTab() {
+		const overview = $<Panel>('#StatsCssOverview');
+		const maps = $<Panel>('#StatsCssMaps');
+		try {
+			if (overview) overview.style.visibility = cssTab === 'overview' ? 'visible' : 'collapse';
+			if (maps) maps.style.visibility = cssTab === 'maps' ? 'visible' : 'collapse';
+		} catch {}
+		const radio = $<RadioButton>(cssTab === 'overview' ? '#StatsCssTabOverview' : '#StatsCssTabMaps');
+		if (radio) radio.checked = true;
+	}
+
+	cssLabel(parent: GenericPanel, text: string, cls: string): Label {
+		return $.CreatePanel('Label', parent, '', { text, class: cls });
+	}
+
+	/** "Name ......... value" row. */
+	cssKv(parent: GenericPanel, name: string, value: string, dim = false) {
+		const row = $.CreatePanel('Panel', parent, '', { class: 'cssstats__kv' + (dim ? ' cssstats__kv--dim' : '') });
+		this.cssLabel(row, name, 'cssstats__kv-name');
+		this.cssLabel(row, value, 'cssstats__kv-value');
+	}
+
+	cssBar(parent: GenericPanel, frac: number, extraClass = '') {
+		const bar = $.CreatePanel('Panel', parent, '', { class: 'cssstats__bar' + (extraClass ? ' ' + extraClass : '') });
+		$.CreatePanel('Panel', bar, '', {
+			class: 'cssstats__bar-fill',
+			style: `width: ${Math.round(Math.max(0, Math.min(1, frac)) * 100)}%;`
+		});
+	}
+
+	/** CS:S skin: the whole content (both tabs) for the current mode / style / filter. */
+	renderCss() {
+		const status = $<Label>('#StatsCssStatus');
+		const overview = $<Panel>('#StatsCssOverview');
+		const mapsTab = $<Panel>('#StatsCssMaps');
+		if (!overview || !mapsTab) return;
+
+		this.cssRenderStyleDropdown();
+
+		if (selectedMode == null) {
+			overview.RemoveAndDeleteChildren();
+			mapsTab.RemoveAndDeleteChildren();
+			leftCard = null;
+			rightCard = null;
+			if (status) {
+				status.visible = true;
+				status.text = 'No maps found in the cache. Make sure you are online, then press Rescan.';
+			}
+			return;
+		}
+		if (status) status.visible = false;
+
+		const maps = scanCache ?? [];
+		const gm = selectedMode;
+		let st: ModeStat;
+		let name: string;
+		if (gm === ALL_MODES) {
+			st = this.computeAll(maps, rankFilter);
+			name = 'All gamemodes';
+		} else {
+			const style = selectedStyle ?? GamemodeDefaultUIStyle.get(gm) ?? Style.NORMAL;
+			st = this.computeMode(maps, gm, rankFilter, style);
+			name = $.Localize(GamemodeInfo.get(gm)?.i18n ?? '') || `Gamemode ${gm}`;
+		}
+		curStat = st;
+		// rerenderIfShown() keys off leftCard; the CS:S tabs stand in for the two cards
+		leftCard = overview;
+		rightCard = mapsTab;
+
+		this.cssFillOverview(overview, gm, name, st);
+		this.cssFillMaps(mapsTab);
+		this.cssApplyTab();
+		this.autoLoadCurrent();
+	}
+
+	/** Overview tab: Completion (+ group rankings) and Completion by tier group boxes. */
+	cssFillOverview(overview: Panel, gm: Gamemode, name: string, st: ModeStat) {
+		overview.RemoveAndDeleteChildren();
+		tierBtns = [];
+
+		const group = (title: string) => {
+			const box = $.CreatePanel('Panel', overview, '', { class: 'cssstats__group' });
+			this.cssLabel(box, title, 'cssstats__group-title');
+			return box;
+		};
+
+		const left = group('Completion');
+		this.cssLabel(
+			left,
+			gm === ALL_MODES ? `${name} (default styles)` : `${name} - ${styleEnglishName(st.style)}`,
+			'cssstats__sub'
+		);
+		this.cssKv(left, 'Completed', `${st.completed} of ${st.total} (${this.pct(st.completed, st.total)}%)`);
+		this.cssBar(left, this.frac(st.completed, st.total), 'cssstats__bar--wide');
+		this.cssKv(left, 'Remaining', `${st.total - st.completed}`);
+		this.cssKv(left, 'Tiers', `${st.tiers.size}`);
+		this.cssKv(left, 'Ranked', `${st.rankedDone} / ${st.rankedTotal}`, rankFilter === 'unranked');
+		this.cssKv(left, 'Unranked', `${st.unrankedDone} / ${st.unrankedTotal}`, rankFilter === 'ranked');
+
+		this.cssLabel(left, 'Group rankings', 'cssstats__subhead');
+		const rankBody = $.CreatePanel('Panel', left, '', { class: 'cssstats__rankbody' });
+		curRankBody = rankBody;
+		this.renderRankResults(rankBody, this.resultFor(selectedMode as Gamemode, selectedStyle, rankFilter));
+
+		const right = group('Completion by tier');
+		this.cssLabel(right, 'Click a tier to list its maps', 'cssstats__sub');
+		const tiers = [...st.tiers.keys()].sort((a, b) => a - b);
+		if (tiers.length === 0) {
+			this.cssLabel(right, 'No tiered maps for this filter.', 'cssstats__note');
+			return;
+		}
+		tiers.forEach((t, i) => {
+			const ts = st.tiers.get(t)!;
+			const row = $.CreatePanel('Panel', right, `StatsCssTier${t}`, {
+				class: 'cssstats__tier' + (i % 2 === 1 ? ' cssstats__tier--odd' : '')
+			});
+			row.SetPanelEvent('onactivate', () => {
+				selectedTier = t;
+				cssTab = 'maps';
+				const mapsTab = $<Panel>('#StatsCssMaps');
+				if (mapsTab) this.cssFillMaps(mapsTab);
+				this.cssApplyTab();
+			});
+			row.SetPanelEvent('onmouseover', () => UiToolkitAPI.ShowTextTooltip(row.id, `Show tier ${t} maps`));
+			row.SetPanelEvent('onmouseout', () => UiToolkitAPI.HideTextTooltip());
+			this.cssLabel(row, `Tier ${t}`, 'cssstats__tier-name');
+			this.cssBar(row, this.frac(ts.completed, ts.total), 'cssstats__bar--tier');
+			this.cssLabel(row, `${ts.completed}/${ts.total}  (${this.pct(ts.completed, ts.total)}%)`, 'cssstats__tier-count');
+		});
+	}
+
+	/** Maps tab: the selected tier's maps (or all), as a CS:S list with rank columns, Top 10 and Play. */
+	cssFillMaps(mapsTab: Panel) {
+		mapsTab.RemoveAndDeleteChildren();
+		tierRankRows = [];
+		cssSelectedRow = null;
+
+		const isAll = selectedMode === ALL_MODES;
+		if (selectedTier != null && curStat && !curStat.tiers.has(selectedTier)) selectedTier = null;
+		const entries = this.mapsInTier(selectedTier);
+		const done = entries.filter((e) => e.done).length;
+
+		const head = $.CreatePanel('Panel', mapsTab, '', { class: 'cssstats__mapshead' });
+		this.cssLabel(head, selectedTier == null ? 'All maps' : `Tier ${selectedTier} maps`, 'cssstats__mapstitle');
+		if (selectedTier != null) {
+			const all = $.CreatePanel('Button', head, '', { class: 'cssstats__btn cssstats__btn--small' });
+			this.cssLabel(all, 'Show all tiers', 'cssstats__btn-text');
+			all.SetPanelEvent('onactivate', () => {
+				selectedTier = null;
+				this.cssFillMaps(mapsTab);
+			});
+		}
+		$.CreatePanel('Panel', head, '', { class: 'w-fill' });
+		this.cssLabel(head, `${done} / ${entries.length} completed`, 'cssstats__mapscount');
+
+		// Column header (widths match the row cells and fillRankInfo's columns)
+		const cols = $.CreatePanel('Panel', mapsTab, '', { class: 'cssstats__cols' });
+		this.cssLabel(cols, 'Map', 'cssstats__col cssstats__cell--name');
+		if (isAll) this.cssLabel(cols, 'Mode', 'cssstats__col cssstats__cell--mode');
+		this.cssLabel(cols, 'Tier', 'cssstats__col cssstats__cell--tier');
+		this.cssLabel(cols, 'Done', 'cssstats__col cssstats__cell--done');
+		const rankCols = $.CreatePanel('Panel', cols, '', { class: 'cssstats__rankinfo' });
+		for (const [text, width] of [
+			['Group', 76],
+			['Rank', 46],
+			['Time', 84],
+			['+WR', 72]
+		] as [string, number][]) {
+			$.CreatePanel('Label', rankCols, '', {
+				text,
+				class: 'cssstats__col',
+				style: `width: ${width}px; text-align: right; margin-left: 8px;`
+			});
+		}
+		this.cssLabel(cols, '', 'cssstats__col cssstats__cell--actions');
+
+		const list = $.CreatePanel('Panel', mapsTab, '', { class: 'cssstats__list' });
+		if (entries.length === 0) {
+			this.cssLabel(list, 'No maps for this selection.', 'cssstats__note cssstats__note--pad');
+			return;
+		}
+
+		entries.forEach((e, i) => {
+			const gm = e.mode;
+			const mapID = e.data.staticData.id;
+			const key = this.perMapKey(mapID, gm, e.style);
+			const row = $.CreatePanel('Panel', list, '', {
+				class: 'cssstats__row' + (i % 2 === 1 ? ' cssstats__row--odd' : '')
+			});
+			if (key === cssSelectedKey) {
+				row.AddClass('cssstats__row--selected');
+				cssSelectedRow = row;
+			}
+			row.SetPanelEvent('onactivate', () => this.cssSelectRow(row, key));
+			row.SetPanelEvent('ondblclick', () => this.openMapLeaderboard(mapID, gm, e.style, e.name));
+
+			this.cssLabel(row, e.name, 'cssstats__cell cssstats__cell--name' + (e.done ? '' : ' cssstats__cell--undone'));
+			if (isAll)
+				this.cssLabel(
+					row,
+					$.Localize(GamemodeInfo.get(gm)?.i18n ?? '') || `Mode ${gm}`,
+					'cssstats__cell cssstats__cell--mode'
+				);
+			this.cssLabel(row, `${e.tier}`, 'cssstats__cell cssstats__cell--tier');
+			this.cssLabel(row, e.done ? '\u2713' : '', 'cssstats__cell cssstats__cell--done');
+
+			const rankInfo = $.CreatePanel('Panel', row, '', { class: 'cssstats__rankinfo' });
+			this.fillRankInfo(rankInfo, perMapRank[key]);
+			tierRankRows.push({ key, panel: rankInfo });
+
+			const actions = $.CreatePanel('Panel', row, '', { class: 'cssstats__cell--actions cssstats__actions' });
+			const top = $.CreatePanel('Button', actions, '', { class: 'cssstats__btn cssstats__btn--row' });
+			this.cssLabel(top, 'Leaderboards', 'cssstats__btn-text');
+			top.SetPanelEvent('onactivate', () => this.openMapLeaderboard(mapID, gm, e.style, e.name));
+
+			const play = $.CreatePanel('Panel', actions, `StatsCssPlay${mapID}_${gm}`, {
+				class: 'cssstats__btn cssstats__btn--row cssstats__btn--icon'
+			});
+			// An Image at runtime (applyActionState sets its icon); typed as the Panel the shared helpers take
+			const icon = $.CreatePanel('Image', play, '', { class: 'cssstats__btn-icon' }) as unknown as Panel;
+			play.SetPanelEvent('onmouseout', () => UiToolkitAPI.HideTextTooltip());
+			play.SetPanelEvent('onactivate', () => {
+				this.pauseRankScan(6);
+				handlePlayMapWhenReady(e.data, gm);
+				if (!e.data.mapFileExists) this.pollDownload(mapID, play, icon, e, gm);
+			});
+			this.applyActionState(play, icon, e.data.mapFileExists);
+			try {
+				if (!e.data.mapFileExists && MapCacheAPI.MapQueuedForDownload(mapID))
+					this.pollDownload(mapID, play, icon, e, gm);
+			} catch {}
+		});
+	}
+
+	/** Maps tab: the clicked row is the pressed one (orange), like the CS:S map selector. */
+	cssSelectRow(row: Panel, key: string) {
+		if (cssSelectedRow?.IsValid()) cssSelectedRow.RemoveClass('cssstats__row--selected');
+		row.AddClass('cssstats__row--selected');
+		cssSelectedRow = row;
+		cssSelectedKey = key;
+	}
+
+	/** Overview tab: the group ladder (WR, Top 10, G1-G6) + averages, in the CS:S look. */
+	cssRenderRankResults(body: Panel, r: RankResult) {
+		body.RemoveAndDeleteChildren();
+		if (r.targets === 0) {
+			this.cssLabel(body, r.pctPending ? 'Waiting to scan...' : 'No completed maps in this view.', 'cssstats__note');
+			return;
+		}
+
+		if (r.ranked > 0) {
+			const cells: { label: string; cls: string; count: number; pending: boolean; tip: string }[] = [
+				{ label: 'WR', cls: 'wr', count: r.wr, pending: false, tip: 'World records (rank 1)' },
+				{
+					label: 'T10',
+					cls: 't10',
+					count: Math.max(0, r.top10 - r.wr),
+					pending: false,
+					tip: 'Top 10 (ranks 2-10, WRs excluded)'
+				}
+			];
+			for (let i = 0; i < RANK_GROUP_COUNT; i++)
+				cells.push({
+					label: `G${i + 1}`,
+					cls: `g${i + 1}`,
+					count: r.groups[i],
+					pending: r.pctPending,
+					tip: `G${i + 1}: official rank group (same as the in-game leaderboards and website, Top 10 excluded)`
+				});
+
+			const ladder = $.CreatePanel('Panel', body, '', { class: 'cssstats__ladder' });
+			cells.forEach((c, i) => {
+				const cell = $.CreatePanel('Panel', ladder, `StatsCssGroup${i}`, { class: 'cssstats__ladder-cell' });
+				this.cssLabel(cell, c.label, `cssstats__ladder-name cssstats__grp--${c.cls}`);
+				this.cssLabel(cell, c.pending ? '...' : `${c.count}`, 'cssstats__ladder-count');
+				cell.SetPanelEvent('onmouseover', () => UiToolkitAPI.ShowTextTooltip(cell.id, c.tip));
+				cell.SetPanelEvent('onmouseout', () => UiToolkitAPI.HideTextTooltip());
+			});
+			if (!r.pctPending) {
+				const placed = r.top10 + r.groups.reduce((a, g) => a + g, 0);
+				this.cssLabel(body, `${placed} of ${r.ranked} ranked maps placed`, 'cssstats__note');
+			}
+		}
+
+		this.cssKv(body, 'Average rank', r.ranked ? `${r.avgRank}` : '-');
+		this.cssKv(
+			body,
+			'Average placement',
+			r.pctPending ? '...' : r.avgPct != null ? `top ${r.avgPct.toFixed(1)}%` : '-'
+		);
+		if (r.ranked === 0 && r.errors > 0)
+			this.cssLabel(body, 'All requests failed. The API may be unreachable from the game.', 'cssstats__note cssstats__note--warn');
+		if (dataTimestamp > 0)
+			this.cssLabel(body, `Updated ${this.agoText(dataTimestamp)}. Rescan for a full refresh.`, 'cssstats__note');
 	}
 
 	//#endregion
@@ -368,11 +816,11 @@ class StatsHandler {
 
 	/** Small status/indicator line next to the player search box. */
 	setUserStatus(text: string, isError = false) {
-		const el = $<Label>('#StatsUserStatus');
+		const el = $<Label>(`#${this.sid('StatsUserStatus')}`);
 		if (!el) return;
 		el.text = text;
 		try {
-			el.style.color = isError ? '#e0736f' : '#8a93a0';
+			el.style.color = isError ? '#e0736f' : this.isCss() ? '#c2c2b5' : '#8a93a0';
 		} catch {}
 	}
 
@@ -384,7 +832,7 @@ class StatsHandler {
 
 	/** Button / Enter handler: look up whatever is typed in the search box. */
 	searchUser() {
-		const entry = $<TextEntry>('#StatsUserSearch');
+		const entry = $<TextEntry>(`#${this.sid('StatsUserSearch')}`);
 		const q = (entry?.text ?? '').trim();
 		if (!q) {
 			this.resetUser(); // empty search = back to the local player
@@ -429,8 +877,10 @@ class StatsHandler {
 		userBusy = false;
 		viewUser = null;
 		remoteDone = null;
-		const entry = $<TextEntry>('#StatsUserSearch');
-		if (entry) entry.text = '';
+		for (const id of ['#StatsUserSearch', '#StatsCssUserSearch']) {
+			const entry = $<TextEntry>(id);
+			if (entry) entry.text = '';
+		}
 		$.Msg('[Stats] resetUser: back to local player');
 		this.applyUserChange();
 	}
@@ -468,6 +918,41 @@ class StatsHandler {
 		} catch (e) {
 			$.Msg(`[Stats] saveRankCache failed: ${String(e)}`);
 		}
+		this.writeMapGroupIndex(uid);
+	}
+
+	/**
+	 * For the local player, mirror each map's main-track [rank, total] into its own small persistentStorage item
+	 * (MAP_GROUP_PREFIX + `mapID|gm|style`), which the map selector's list rows read to show a group icon instead of
+	 * the completed flag. One small item per map so each row reads only its own entry rather than parsing the whole
+	 * stats cache. Only entries whose value changed are written (saveRankCache runs on every small patch too).
+	 */
+	writeMapGroupIndex(uid: number) {
+		if (uid !== MomentumAPI.GetLocalUserData()?.id) return; // the list shows the local player's placements
+		let written = 0;
+		for (const [key, pm] of Object.entries(perMapRank)) {
+			const value = pm.rank != null && pm.total ? `${pm.rank}/${pm.total}` : '';
+			if (writtenMapGroups[key] === value) continue;
+			try {
+				// First touch this session: skip the write if storage already holds it (from an earlier session)
+				if (writtenMapGroups[key] === undefined) {
+					const stored = $.persistentStorage.getItem<string>(MAP_GROUP_PREFIX + key) ?? '';
+					writtenMapGroups[key] = stored;
+					if (stored === value) continue;
+				}
+				$.persistentStorage.setItem(MAP_GROUP_PREFIX + key, value);
+				writtenMapGroups[key] = value;
+				written++;
+			} catch (e) {
+				$.Msg(`[Stats] writeMapGroupIndex failed: ${String(e)}`);
+				return;
+			}
+		}
+		if (written > 0) {
+			$.Msg(`[Stats] map group index: ${written} entries updated`);
+			// Rows already built (e.g. the map selector list) re-read their group now instead of on next selection
+			$.DispatchEvent('Stats_MapGroupsUpdated');
+		}
 	}
 
 	/** Read a user's persisted cache, or null (absent / wrong version / unreadable). */
@@ -495,6 +980,8 @@ class StatsHandler {
 		perMapRank = cached.ranks;
 		dataTimestamp = cached.ts || 0;
 		this.recomputeTrackedRankResults();
+		// Caches saved before the map list's group icons existed haven't been mirrored yet (no-op once they are)
+		this.writeMapGroupIndex(this.viewUid());
 		$.Msg(`[Stats] loadCacheForView: ${Object.keys(perMapRank).length} cached maps, ts=${dataTimestamp}`);
 		return true;
 	}
@@ -522,7 +1009,14 @@ class StatsHandler {
 	 *  result pctPending (so enqueueRank re-scans it). */
 	recomputeRankResult(mode: Gamemode, style: Style | null, filter: RankFilter): RankResult {
 		const targets = this.gatherTargetsFor(mode, style, filter);
-		let wr = 0, top10 = 0, ranked = 0, noEntry = 0, errors = 0, sumRank = 0, sumPct = 0, pctCount = 0;
+		let wr = 0,
+			top10 = 0,
+			ranked = 0,
+			noEntry = 0,
+			errors = 0,
+			sumRank = 0,
+			sumPct = 0,
+			pctCount = 0;
 		const groups = [0, 0, 0, 0, 0, 0];
 		let pending = false;
 		for (const t of targets) {
@@ -723,7 +1217,11 @@ class StatsHandler {
 
 	/** Every PB run of a user from the website (paginated, 100 per request). `stale()` aborts early (returns
 	 *  what was gathered); null = the first page failed outright, so the result can't be trusted at all. */
-	async fetchPbRuns(uid: number, stale: () => boolean, onProgress?: (count: number) => void): Promise<PbRun[] | null> {
+	async fetchPbRuns(
+		uid: number,
+		stale: () => boolean,
+		onProgress?: (count: number) => void
+	): Promise<PbRun[] | null> {
 		const runs: PbRun[] = [];
 		const take = 100;
 		let skip = 0;
@@ -758,11 +1256,13 @@ class StatsHandler {
 		if (scanning) return; // already scanning
 		$.Msg(`[Stats] scan: starting map-cache scan (id 1..${MAX_ID}, retry ${scanRetries})`);
 		scanning = true;
-		const status = $<Label>('#StatsStatus');
+		const status = $<Label>(`#${this.sid('StatsStatus')}`);
 		if (status) status.visible = true; // shown while scanning / empty; hidden once content renders
 		$<Panel>('#StatsGamemodeBar')?.RemoveAndDeleteChildren();
 		$<Panel>('#StatsContent')?.RemoveAndDeleteChildren();
 		$<Panel>('#StatsFilter')?.RemoveAndDeleteChildren();
+		$<Panel>('#StatsCssOverview')?.RemoveAndDeleteChildren();
+		$<Panel>('#StatsCssMaps')?.RemoveAndDeleteChildren();
 		leftCard = null; // cards were just deleted; force recreation on next render
 		rightCard = null;
 		rankResults = {}; // completions may have changed; drop cached rank stats
@@ -901,11 +1401,7 @@ class StatsHandler {
 			if (staticData.status !== MapStatus.APPROVED) continue; // exclude beta/testing/submission maps
 			for (const st of styles) {
 				const lb = getTrack(staticData, gm, TrackType.MAIN, 1, st);
-				if (
-					lb &&
-					lb.tier &&
-					(lb.type === LeaderboardType.RANKED || lb.type === LeaderboardType.UNRANKED)
-				)
+				if (lb && lb.tier && (lb.type === LeaderboardType.RANKED || lb.type === LeaderboardType.UNRANKED))
 					return true;
 			}
 		}
@@ -1041,7 +1537,15 @@ class StatsHandler {
 	//#region rendering
 
 	/** Restyle a bar button for active/inactive without recreating it (avoids flicker). */
-	applyBtn(panel: Panel, label: Panel, active: boolean, activeBg: string, inactiveBg: string, activeText: string, inactiveText: string) {
+	applyBtn(
+		panel: Panel,
+		label: Panel,
+		active: boolean,
+		activeBg: string,
+		inactiveBg: string,
+		activeText: string,
+		inactiveText: string
+	) {
 		try {
 			panel.style.backgroundColor = active ? activeBg : inactiveBg;
 		} catch {}
@@ -1054,6 +1558,11 @@ class StatsHandler {
 	}
 
 	renderFilter() {
+		if (this.isCss()) {
+			filterBtns = [];
+			this.cssRenderFilterDropdown();
+			return;
+		}
 		const bar = $<Panel>('#StatsFilter');
 		if (!bar) return;
 		bar.RemoveAndDeleteChildren();
@@ -1079,6 +1588,10 @@ class StatsHandler {
 	}
 
 	highlightFilter() {
+		if (this.isCss()) {
+			this.cssRenderFilterDropdown();
+			return;
+		}
 		for (const b of filterBtns) {
 			if (b.panel.IsValid())
 				this.applyBtn(b.panel, b.label, rankFilter === b.key, '#1c2b30', '#1a1f27', C_ACCENT, '#aeb6c2');
@@ -1086,6 +1599,11 @@ class StatsHandler {
 	}
 
 	renderBar() {
+		if (this.isCss()) {
+			modeBtns = [];
+			this.cssRenderModeDropdown();
+			return;
+		}
 		const bar = $<Panel>('#StatsGamemodeBar');
 		if (!bar) return;
 		bar.RemoveAndDeleteChildren();
@@ -1129,6 +1647,10 @@ class StatsHandler {
 	}
 
 	highlightBar() {
+		if (this.isCss()) {
+			this.cssRenderModeDropdown();
+			return;
+		}
 		for (const b of modeBtns) {
 			if (b.panel.IsValid())
 				this.applyBtn(b.panel, b.label, b.key === selectedMode, '#1c2732', '#141922', '#ffffff', '#9aa3af');
@@ -1140,9 +1662,8 @@ class StatsHandler {
 	renderStyles(parent: Panel) {
 		styleBtns = [];
 
-		const styles = selectedMode == null || selectedMode === ALL_MODES
-			? []
-			: [...(GamemodeStyles.get(selectedMode) ?? [])];
+		const styles =
+			selectedMode == null || selectedMode === ALL_MODES ? [] : [...(GamemodeStyles.get(selectedMode) ?? [])];
 
 		// Only meaningful when the mode actually has a choice of styles.
 		if (styles.length <= 1) return;
@@ -1180,6 +1701,10 @@ class StatsHandler {
 	}
 
 	renderContent() {
+		if (this.isCss()) {
+			this.renderCss();
+			return;
+		}
 		const status = $<Label>('#StatsStatus');
 		const content = $<Panel>('#StatsContent');
 		if (!content) return;
@@ -1476,7 +2001,11 @@ class StatsHandler {
 	}
 
 	/** Top 10 + board size of one map's (gm, MAIN, style) board. null = request failed (not cached, retryable). */
-	async fetchBoardTop(mapID: number, gm: Gamemode, style: Style): Promise<{ rows: Top10Row[]; total: number } | null> {
+	async fetchBoardTop(
+		mapID: number,
+		gm: Gamemode,
+		style: Style
+	): Promise<{ rows: Top10Row[]; total: number } | null> {
 		const url = `${API}/v1/maps/${mapID}/leaderboard?gamemode=${gm}&trackType=0&trackNum=1&style=${style}&take=10`;
 		const j = await this.fetchJson(url);
 		if (j == null || !Array.isArray(j.data)) return null;
@@ -1555,6 +2084,7 @@ class StatsHandler {
 		this.lbStyle = style;
 		this.lbMapName = mapName;
 
+		popup.SetHasClass('statslb--css', this.isCss());
 		try {
 			popup.style.visibility = 'visible';
 		} catch {}
@@ -1637,7 +2167,13 @@ class StatsHandler {
 	 *  and the persisted cache. No-op if nothing changed. Returns whether anything was written. */
 	applyPerMapUpdate(gm: Gamemode, style: Style, key: string, next: PerMapRank): boolean {
 		const prev = perMapRank[key];
-		if (prev && prev.rank === next.rank && prev.time === next.time && prev.total === next.total && prev.wrTime === next.wrTime)
+		if (
+			prev &&
+			prev.rank === next.rank &&
+			prev.time === next.time &&
+			prev.total === next.total &&
+			prev.wrTime === next.wrTime
+		)
 			return false; // unchanged — nothing to recompute or persist
 		perMapRank[key] = next;
 		this.updateTierRankRow(key); // reflect it in the tier list, if shown
@@ -1732,7 +2268,8 @@ class StatsHandler {
 
 		const styles = new Set<Style>([GamemodeDefaultUIStyle.get(gm) ?? Style.NORMAL]);
 		const prefix = `${mapID}|${gm}|`;
-		for (const k of Object.keys(perMapRank)) if (k.startsWith(prefix)) styles.add(Number(k.slice(prefix.length)) as Style);
+		for (const k of Object.keys(perMapRank))
+			if (k.startsWith(prefix)) styles.add(Number(k.slice(prefix.length)) as Style);
 
 		const gen = rankGen;
 		let flipped = false;
@@ -1746,7 +2283,12 @@ class StatsHandler {
 			if (gen !== rankGen || !this.canLiveRefresh()) return;
 			delete mapLbCache[key];
 			for (const k of Object.keys(yourStandingCache)) if (k.startsWith(`${key}|`)) delete yourStandingCache[k];
-			this.applyPerMapUpdate(gm, style, key, { rank: res.rank, time: res.time, total: total > 0 ? total : null, wrTime });
+			this.applyPerMapUpdate(gm, style, key, {
+				rank: res.rank,
+				time: res.time,
+				total: total > 0 ? total : null,
+				wrTime
+			});
 		}
 		if (flipped) this.rerenderIfShown();
 	}
@@ -1793,11 +2335,17 @@ class StatsHandler {
 					times[this.perMapKey(r.mapID, r.gamemode, r.style)] = r.time;
 				const map = byId.get(r.mapID);
 				if (map && !this.localCacheHas(map, r.gamemode, r.trackType, r.trackNum, r.style))
-					gaps.set(this.perMapKey(r.mapID, r.gamemode, r.style), { mapID: r.mapID, gm: r.gamemode, style: r.style });
+					gaps.set(this.perMapKey(r.mapID, r.gamemode, r.style), {
+						mapID: r.mapID,
+						gm: r.gamemode,
+						style: r.style
+					});
 			}
 			localApiDone = done;
 			localApiPbTimes = times;
-			$.Msg(`[Stats] PB sync: ${runs.length} PBs online, ${gaps.size} map/mode/style combos missing from the game cache`);
+			$.Msg(
+				`[Stats] PB sync: ${runs.length} PBs online, ${gaps.size} map/mode/style combos missing from the game cache`
+			);
 
 			// Completion counts are now right on this page — redraw, and rank-check the newly counted maps.
 			this.recomputeTrackedRankResults();
@@ -1837,7 +2385,10 @@ class StatsHandler {
 					if (idx !== -1) scanCache![idx] = fresh;
 					fixedIds.add(g.mapID);
 				}
-				if (this.localCacheHas(fresh, g.gm, TrackType.MAIN, 1, g.style) || this.localCacheAnyTrack(fresh, g.gm, g.style))
+				if (
+					this.localCacheHas(fresh, g.gm, TrackType.MAIN, 1, g.style) ||
+					this.localCacheAnyTrack(fresh, g.gm, g.style)
+				)
 					fixed++;
 			}
 			const left = list.length - fixed;
@@ -1860,7 +2411,7 @@ class StatsHandler {
 		const trackStyle = style === Style.PRO || style === Style.TELEPORT ? 0 : style;
 		for (const [k, v] of Object.entries(tracks)) {
 			const key = Number(k);
-			if ((key >>> 24) === gm && (key & 0xff) === trackStyle && v?.completed) return true;
+			if (key >>> 24 === gm && (key & 0xff) === trackStyle && v?.completed) return true;
 		}
 		return false;
 	}
@@ -1891,7 +2442,9 @@ class StatsHandler {
 
 	/** Badge label + colour for a cutoff row. Sentinel group 0 is the board's absolute last place. */
 	cutoffBadge(group: number): { badge: string; color: string } {
-		return group === 0 ? { badge: 'LAST', color: '#c56b6b' } : { badge: `G${group}`, color: GROUP_COLORS[group - 1] };
+		return group === 0
+			? { badge: 'LAST', color: '#c56b6b' }
+			: { badge: `G${group}`, color: GROUP_COLORS[group - 1] };
 	}
 
 	/** Fetch each group's cutoff person (one `take=1` call each) and fill its row when it lands. */
@@ -1941,9 +2494,11 @@ class StatsHandler {
 			const url = img.medium || img.large || img.small || img.xl; // medium is plenty for a 240px strip
 			if (!url) continue;
 			const image = $.CreatePanel('Image', holder, '', {
-				style:
-					'width: 240px; height: 135px; margin-bottom: 10px; horizontal-align: center; ' +
-					'border-radius: 8px; background-color: #171b22;'
+				style: this.isCss()
+					? 'width: 240px; height: 135px; margin-bottom: 8px; horizontal-align: center; ' +
+						'background-color: #00000040; border: 1px solid #00000073;'
+					: 'width: 240px; height: 135px; margin-bottom: 10px; horizontal-align: center; ' +
+						'border-radius: 8px; background-color: #171b22;'
 			});
 			(image as ImagePanel).SetImage(url); // CDN url straight to the panel (not whitelist-gated, unlike AsyncWebRequest)
 		}
@@ -2014,6 +2569,31 @@ class StatsHandler {
 		return (delta < 0 ? '−' : '+') + this.fmtDiff(Math.abs(delta), decimals);
 	}
 
+	/** Popup colour for the active skin: the CS:S window is grey, so the dark theme's greys map to light text. */
+	lbc(color: string): string {
+		if (!this.isCss()) return color;
+		const map: Record<string, string> = {
+			'#7d8794': '#c2c2b5',
+			'#6f7885': '#b4b3aa',
+			'#cdd5df': '#ecece3',
+			'#dfe5ec': '#ecece3',
+			'#b8c0cc': '#ecece3',
+			'#8a93a0': '#c2c2b5',
+			'#e0a86f': '#f3c98a',
+			'#e0736f': '#ffb0a6',
+			'#8fd694': '#c6f5b0',
+			[C_BORDER]: '#00000073'
+		};
+		return map[color] ?? color;
+	}
+
+	/** Leaderboard row box for the active skin (CS:S: flat striped rows, no cards). */
+	lbRowStyle(): string {
+		return this.isCss()
+			? 'flow-children: right; width: 100%; padding: 5px 10px; text-shadow: 0px 1px 0px #00000066;'
+			: LB_ROW_STYLE;
+	}
+
 	/** Build the popup body: the top 10, then a "group cutoffs" section (last person in each group, with the
 	 *  viewed user's own row slotted in where they place). `standing` = the viewed user's rank + PB time. */
 	renderMapLb(entry: MapLb, standing: Standing) {
@@ -2033,14 +2613,14 @@ class StatsHandler {
 		const hcol = (text: string, w: number, align = 'right') =>
 			$.CreatePanel('Label', head, '', {
 				text,
-				style: `width: ${w}px; font-size: 12px; color: #7d8794; text-align: ${align}; vertical-align: center;`
+				style: `width: ${w}px; font-size: 12px; color: ${this.lbc('#7d8794')}; text-align: ${align}; vertical-align: center;`
 			});
 		hcol('', LB_W_BADGE, 'center');
 		hcol('#', LB_W_RANK, 'center');
 		$.CreatePanel('Panel', head, '', { style: `width: ${LB_W_AV}px; height: 1px;` });
 		$.CreatePanel('Label', head, '', {
 			text: 'Player',
-			style: 'width: fill-parent-flow(1); font-size: 12px; color: #7d8794; text-align: left; vertical-align: center;'
+			style: `width: fill-parent-flow(1); font-size: 12px; color: ${this.lbc('#7d8794')}; text-align: left; vertical-align: center;`
 		});
 		hcol('Time', LB_W_TIME);
 		hcol('+ WR', LB_W_DIFF);
@@ -2050,7 +2630,7 @@ class StatsHandler {
 		for (const r of entry.rows) {
 			const badge = r.rank === 1 ? 'WR' : 'T10';
 			const badgeColor = r.rank === 1 ? RANK_WR_COLOR : RANK_T10_COLOR;
-			const rp = $.CreatePanel('Panel', list, '', { style: LB_ROW_STYLE });
+			const rp = $.CreatePanel('Panel', list, '', { style: this.lbRowStyle() });
 			this.fillLbRow(rp, badge, badgeColor, r.rank, r, wr, meId, '—', yourTime);
 		}
 
@@ -2061,7 +2641,7 @@ class StatsHandler {
 		if (entry.cutoffs.length || showYou) {
 			$.CreatePanel('Label', list, '', {
 				text: `Group cutoffs · last place · where ${viewUser ? 'they' : 'you'} place`,
-				style: `font-size: 12px; color: #7d8794; text-transform: uppercase; letter-spacing: 1px; margin: 12px 10px 6px 10px; padding-top: 10px; border-top: 1px solid ${C_BORDER};`
+				style: `font-size: 12px; color: ${this.lbc('#7d8794')}; text-transform: uppercase; letter-spacing: 1px; margin: 12px 10px 6px 10px; padding-top: 10px; border-top: 1px solid ${this.lbc(C_BORDER)};`
 			});
 
 			// Merge the group cutoffs with the "you" row and render in rank order.
@@ -2071,7 +2651,7 @@ class StatsHandler {
 			slots.sort((a, b) => a.rank - b.rank);
 
 			for (const s of slots) {
-				const rp = $.CreatePanel('Panel', list, '', { style: LB_ROW_STYLE });
+				const rp = $.CreatePanel('Panel', list, '', { style: this.lbRowStyle() });
 				if (s.you) {
 					const rank = yr as number;
 					const g = this.bestGroup(rank, entry.total); // the group the viewed user falls into
@@ -2084,7 +2664,17 @@ class StatsHandler {
 						steamID: id.steamID,
 						downloadURL: null // standing fetch has no replay URL; Watch Replay is only on fetched board rows
 					};
-					this.fillLbRow(rp, g >= 1 ? `G${g}` : '—', g >= 1 ? GROUP_COLORS[g - 1] : '#6f7885', rank, youRow, wr, meId, '—', yourTime);
+					this.fillLbRow(
+						rp,
+						g >= 1 ? `G${g}` : '—',
+						g >= 1 ? GROUP_COLORS[g - 1] : '#6f7885',
+						rank,
+						youRow,
+						wr,
+						meId,
+						'—',
+						yourTime
+					);
 				} else {
 					const c = s.cutoff as GroupCutoff;
 					const b = this.cutoffBadge(c.group);
@@ -2112,7 +2702,16 @@ class StatsHandler {
 		rp.RemoveAndDeleteChildren();
 		const mine = row != null && row.userID === meId;
 		try {
-			rp.style.backgroundColor = mine ? '#1c2b30' : '#171b22'; // highlight the viewed player's row
+			// highlight the viewed player's row (CS:S: a darker sunken stripe; others alternate lightly)
+			rp.style.backgroundColor = this.isCss()
+				? mine
+					? '#00000059'
+					: rank % 2 === 0
+						? '#0000001a'
+						: '#00000000'
+				: mine
+					? '#1c2b30'
+					: '#171b22';
 		} catch {}
 
 		// Right-click a filled row → context menu (Watch Replay / player profile), like the main-menu leaderboards.
@@ -2125,7 +2724,7 @@ class StatsHandler {
 		});
 		$.CreatePanel('Label', rp, '', {
 			text: `#${rank}`,
-			style: `width: ${LB_W_RANK}px; font-size: 14px; font-weight: bold; color: ${rank === 1 ? RANK_WR_COLOR : '#cdd5df'}; text-align: center; vertical-align: center;`
+			style: `width: ${LB_W_RANK}px; font-size: 14px; font-weight: bold; color: ${rank === 1 ? RANK_WR_COLOR : this.lbc('#cdd5df')}; text-align: center; vertical-align: center;`
 		});
 
 		if (row?.steamID) {
@@ -2137,22 +2736,23 @@ class StatsHandler {
 			} catch {}
 		} else {
 			$.CreatePanel('Panel', rp, '', {
-				style: 'width: 26px; height: 26px; border-radius: 4px; margin-right: 14px; vertical-align: center; background-color: #232a33;'
+				style: `width: 26px; height: 26px; border-radius: 4px; margin-right: 14px; vertical-align: center; background-color: ${this.isCss() ? '#0000004d' : '#232a33'};`
 			});
 		}
 
 		$.CreatePanel('Label', rp, '', {
 			text: row ? row.alias : ph,
-			style: `width: fill-parent-flow(1); font-size: 14px; color: ${mine ? '#ffffff' : row ? '#dfe5ec' : '#6f7885'}; vertical-align: center; text-overflow: ellipsis;`
+			style: `width: fill-parent-flow(1); font-size: 14px; color: ${mine ? '#ffffff' : this.lbc(row ? '#dfe5ec' : '#6f7885')}; vertical-align: center; text-overflow: ellipsis;`
 		});
 		$.CreatePanel('Label', rp, '', {
 			text: row ? this.fmtTime(row.time, 3) : ph,
-			style: `width: ${LB_W_TIME}px; font-size: 14px; color: ${row ? '#b8c0cc' : '#6f7885'}; text-align: right; vertical-align: center;`
+			style: `width: ${LB_W_TIME}px; font-size: 14px; color: ${this.lbc(row ? '#b8c0cc' : '#6f7885')}; text-align: right; vertical-align: center;`
 		});
-		const wrDiff = row == null ? '' : rank === 1 || wr == null ? '—' : `+${this.fmtDiff(Math.max(0, row.time - wr), 3)}`;
+		const wrDiff =
+			row == null ? '' : rank === 1 || wr == null ? '—' : `+${this.fmtDiff(Math.max(0, row.time - wr), 3)}`;
 		$.CreatePanel('Label', rp, '', {
 			text: wrDiff,
-			style: `width: ${LB_W_DIFF}px; font-size: 13px; color: ${rank === 1 ? '#6f7885' : '#e0a86f'}; text-align: right; vertical-align: center;`
+			style: `width: ${LB_W_DIFF}px; font-size: 13px; color: ${this.lbc(rank === 1 ? '#6f7885' : '#e0a86f')}; text-align: right; vertical-align: center;`
 		});
 
 		// vs You: signed gap to the viewed user's own time. Blank if you're not on the board; "—" on your
@@ -2170,7 +2770,7 @@ class StatsHandler {
 		}
 		$.CreatePanel('Label', rp, '', {
 			text: youText,
-			style: `width: ${LB_W_YOU}px; font-size: 13px; color: ${youColor}; text-align: right; vertical-align: center;`
+			style: `width: ${LB_W_YOU}px; font-size: 13px; color: ${this.lbc(youColor)}; text-align: right; vertical-align: center;`
 		});
 	}
 
@@ -2235,7 +2835,8 @@ class StatsHandler {
 		const note = (txt: string) => {
 			if (!isCurrent()) return;
 			curRankBody!.RemoveAndDeleteChildren();
-			$.CreatePanel('Label', curRankBody!, '', { text: txt, style: 'font-size: 12px; color: #8a93a0;' });
+			if (this.isCss()) this.cssLabel(curRankBody!, txt, 'cssstats__note');
+			else $.CreatePanel('Label', curRankBody!, '', { text: txt, style: 'font-size: 12px; color: #8a93a0;' });
 		};
 		// After this scan updates a cached result, refresh the on-screen panel for whatever's currently
 		// shown — the current view derives from these per-(mode,style,filter) results (both/All included).
@@ -2255,7 +2856,8 @@ class StatsHandler {
 
 		if (!uid || targets.length === 0) {
 			rankResults[key] = { ...EMPTY_RANK, targets: targets.length, groups: [0, 0, 0, 0, 0, 0] };
-			if (isCurrent()) note(targets.length === 0 ? 'No completed maps in this view.' : 'Could not read the user id.');
+			if (isCurrent())
+				note(targets.length === 0 ? 'No completed maps in this view.' : 'Could not read the user id.');
 			render();
 			return;
 		}
@@ -2299,7 +2901,8 @@ class StatsHandler {
 			avgPct: null,
 			pctPending: ranked.length > 0,
 			ranked: ranked.length,
-			noEntry, errors,
+			noEntry,
+			errors,
 			targets: targets.length,
 			elapsed: (Date.now() - t0) / 1000,
 			sumRank,
@@ -2365,7 +2968,9 @@ class StatsHandler {
 	bestGroup(rank: number, total: number): number {
 		// 1..6 for G1..G6, 0 for no group. WR / Top 10 are handled by callers (rank ≤ 10 never reaches here as a group).
 		const g = getCompletionGroup(rank, getRankGroupEnds(total));
-		return g != null && g >= CompletionGroup.GROUP_1 && g <= CompletionGroup.GROUP_6 ? g - CompletionGroup.GROUP_1 + 1 : 0;
+		return g != null && g >= CompletionGroup.GROUP_1 && g <= CompletionGroup.GROUP_6
+			? g - CompletionGroup.GROUP_1 + 1
+			: 0;
 	}
 
 	/** Sum a set of cached per-filter results into one. Missing keys → still scanning (pctPending). */
@@ -2395,6 +3000,10 @@ class StatsHandler {
 	}
 
 	renderRankResults(body: Panel, r: RankResult) {
+		if (this.isCss()) {
+			this.cssRenderRankResults(body, r);
+			return;
+		}
 		body.RemoveAndDeleteChildren();
 
 		// Nothing counted yet: either still queued/scanning, or genuinely no completed maps.
@@ -2554,9 +3163,7 @@ class StatsHandler {
 					'background-color: #00000000; border-left: 3px solid #00000000;'
 			});
 			row.SetPanelEvent('onactivate', () => this.selectTier(t));
-			row.SetPanelEvent('onmouseover', () =>
-				UiToolkitAPI.ShowTextTooltip(row.id, `Show tier ${t} maps`)
-			);
+			row.SetPanelEvent('onmouseover', () => UiToolkitAPI.ShowTextTooltip(row.id, `Show tier ${t} maps`));
 			row.SetPanelEvent('onmouseout', () => UiToolkitAPI.HideTextTooltip());
 
 			const tierLabel = $.CreatePanel('Label', row, '', {
@@ -2645,7 +3252,9 @@ class StatsHandler {
 				text: e.name,
 				style: `width: fill-parent-flow(1); font-size: 14px; color: ${nameColor}; vertical-align: center; text-overflow: ellipsis;`
 			});
-			nameLabel.SetPanelEvent('onactivate', () => this.openMapLeaderboard(e.data.staticData.id, gm, e.style, e.name));
+			nameLabel.SetPanelEvent('onactivate', () =>
+				this.openMapLeaderboard(e.data.staticData.id, gm, e.style, e.name)
+			);
 			nameLabel.SetPanelEvent('onmouseover', () => {
 				try {
 					nameLabel.style.color = C_ACCENT;
@@ -2679,8 +3288,7 @@ class StatsHandler {
 
 			const mapID = e.data.staticData.id;
 			const play = $.CreatePanel('Panel', row, `StatsPlay${mapID}_${gm}`, {
-				style:
-					'width: 34px; height: 28px; border-radius: 6px; vertical-align: center; border: 1px solid #3a4656;'
+				style: 'width: 34px; height: 28px; border-radius: 6px; vertical-align: center; border: 1px solid #3a4656;'
 			});
 			const icon = $.CreatePanel('Image', play, '', {
 				style: 'width: 16px; height: 16px; horizontal-align: center; vertical-align: center;'
@@ -2690,7 +3298,7 @@ class StatsHandler {
 			// otherwise it starts the download (possibly via a confirm popup) — then we poll to flip.
 			play.SetPanelEvent('onactivate', () => {
 				this.pauseRankScan(6); // free the HTTP client so the launch/download starts at once, not after the scan
-				handlePlayMap(e.data, gm);
+				handlePlayMapWhenReady(e.data, gm);
 				if (!e.data.mapFileExists) this.pollDownload(mapID, play, icon, e, gm);
 			});
 			this.applyActionState(play, icon, e.data.mapFileExists);
@@ -2705,16 +3313,15 @@ class StatsHandler {
 
 	/** Style a map row's action button as Play (downloaded) or Download (not yet). */
 	applyActionState(play: Panel, icon: Panel, downloaded: boolean) {
-		try {
-			play.style.backgroundColor = downloaded ? '#1d3b30' : '#22303f';
-		} catch {}
+		if (!this.isCss()) {
+			try {
+				play.style.backgroundColor = downloaded ? '#1d3b30' : '#22303f';
+			} catch {}
+		}
 		(icon as ImagePanel).SetImage(`file://{images}/${downloaded ? 'play' : 'download'}.svg`);
 		play.ClearPanelEvent('onmouseover');
 		play.SetPanelEvent('onmouseover', () =>
-			UiToolkitAPI.ShowTextTooltip(
-				play.id,
-				$.Localize(downloaded ? '#Action_StartMap' : '#Action_DownloadMap')
-			)
+			UiToolkitAPI.ShowTextTooltip(play.id, $.Localize(downloaded ? '#Action_StartMap' : '#Action_DownloadMap'))
 		);
 	}
 
@@ -2779,8 +3386,14 @@ class StatsHandler {
 		const maps = scanCache ?? [];
 		const isAll = selectedMode === ALL_MODES;
 		const modes = isAll ? available : [selectedMode as Gamemode];
-		const out: { data: MapCacheAPI.MapData; name: string; done: boolean; mode: Gamemode; style: Style; tier: number }[] =
-			[];
+		const out: {
+			data: MapCacheAPI.MapData;
+			name: string;
+			done: boolean;
+			mode: Gamemode;
+			style: Style;
+			tier: number;
+		}[] = [];
 
 		for (const gm of modes) {
 			const style = isAll
@@ -2839,10 +3452,21 @@ class StatsHandler {
 		const W_R = 46;
 		const W_T = 84;
 		const W_D = 72;
+		// The CS:S list is grey, so the dark theme's greys/blue-greys map to its light text colours
+		const css = this.isCss();
+		const CSS_COLORS: Record<string, string> = {
+			'#6f7885': '#b4b3aa',
+			'#cdd5df': '#ecece3',
+			'#b8c0cc': '#ecece3',
+			'#e0a86f': '#f3c98a'
+		};
 		const col = (text: string, color: string, width: number) =>
 			$.CreatePanel('Label', container, '', {
 				text,
-				style: `width: ${width}px; font-size: 13px; color: ${color}; text-align: right; vertical-align: center; margin-left: 8px;`
+				style:
+					`width: ${width}px; font-size: 13px; color: ${css ? (CSS_COLORS[color] ?? color) : color}; ` +
+					'text-align: right; vertical-align: center; margin-left: 8px;' +
+					(css ? ' text-shadow: 0px 1px 0px #00000066;' : '')
 			});
 
 		if (d.rank == null) {

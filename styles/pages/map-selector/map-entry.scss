@@ -1,4 +1,5 @@
 @use '../../config' as *;
+@use 'sass:map';
 @use '../../abstract/mixin';
 @use '../../abstract/function';
 
@@ -123,6 +124,20 @@ $transition: 0.125s ease-out 0s;
 		&-text {
 			horizontal-align: center;
 			font-size: 18px;
+		}
+
+		// Group placement colours, the same as the leaderboard group pills ($colors-group-pill). Set by
+		// MapEntryHandler.setGroupClass; plain flag + white time when the rank isn't known.
+		@each $key, $colors in $colors-group-pill {
+			&--group-#{$key} {
+				.map-entry__pb-icon {
+					wash-color: map.get($colors, 'text');
+				}
+
+				.map-entry__pb-text {
+					color: map.get($colors, 'text');
+				}
+			}
 		}
 	}
 

@@ -91,3 +91,75 @@
 		width: fill-parent-flow(1);
 	}
 }
+
+// Date column: only the Classic style shows it
+.leaderboard-entry__achieved {
+	visibility: collapse;
+}
+
+// Classic style (Interface > Leaderboard Style): this fork's pre-merge rows - 30px, striped, 16px text,
+// Rank / Player / Time / Date columns, no group borders. Entries load their own layout (entry.xml), so the class goes
+// on each entry (leaderboard-entry--classic, added in LeaderboardsHandler) and its children are styled from there.
+.leaderboard-entry--classic {
+	height: 30px;
+	border: 0px;
+	background-color: rgba(0, 0, 0, 0);
+	transition: background-color 0.1s linear 0s;
+
+	&.leaderboard-entry--even {
+		background-color: rgba(255, 255, 255, 0.03);
+	}
+
+	&.leaderboard-entry--odd {
+		background-color: rgba(255, 255, 255, 0.01);
+	}
+
+	&:hover {
+		background-color: rgba(255, 255, 255, 0.1);
+	}
+
+	&.leaderboard-entry--localplayer {
+		background-color: color.scale(rgba($blue, 0.7), $lightness: -20%);
+
+		&:hover {
+			background-color: rgba($blue, 0.7);
+		}
+	}
+
+	// Completion group boundaries, as in the new style (pills are drawn by LeaderboardsHandler)
+	@each $key, $colors in $colors-group-pill {
+		&.leaderboard-entry--group-#{$key} {
+			border-bottom: 4px solid map.get($colors, 'bg');
+		}
+	}
+
+	.leaderboard-entry__item {
+		font-size: 16px;
+		color: rgba(255, 255, 255, 1);
+	}
+
+	.leaderboard-entry__spacer {
+		visibility: collapse;
+	}
+
+	.leaderboard-entry__rank {
+		width: fill-parent-flow(0.1);
+		text-align: left;
+		padding-right: 0px;
+	}
+
+	.leaderboard-entry__player {
+		width: fill-parent-flow(0.45);
+	}
+
+	.leaderboard-entry__time {
+		width: fill-parent-flow(0.25);
+		text-align: left;
+	}
+
+	.leaderboard-entry__achieved {
+		visibility: visible;
+		width: fill-parent-flow(0.2);
+		text-align: right;
+	}
+}

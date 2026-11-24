@@ -11,6 +11,7 @@ import { getTrack, getUserMapDataTrack } from 'common/leaderboard';
 import { handlePlayMap, getTier, getAuthorNames } from 'common/maps';
 import { LobbyMemberStateChange } from 'common/online';
 import type { MemberData } from 'common/online';
+import { MapLeaderboardPopup } from 'common/map-leaderboard-popup';
 
 // The three bottom-bar filter categories (multi-select checkboxes).
 type Category = 'ranked' | 'unranked' | 'beta';
@@ -48,10 +49,18 @@ let selectedMapId: number | null = null;
 const filters: Record<Category, boolean> = { ranked: true, unranked: false, beta: false };
 let sortKey: SortKey = 'dateAdded'; // default view: newest maps first
 let sortAsc = false;
+let searchTerms: string[] = []; // lower-cased words from the search box; each must match the name or authors
+let searchText = '';
 
 // Best-effort "players in the map lobby" — the C++ lobby API only surfaces member data for the
 // lobby WE are in, so this counts members of the current lobby by the map they're on. 0 otherwise.
 const memberMaps: Record<string, string> = {}; // steamID -> current map_name
+
+// Play/download requests are handled by the main map selector's C++ panel (MomentumMapSelect), which only exists once
+// that page has loaded. The main menu loads it hidden on request (MainMenu_PreloadMapSelector) and answers with
+// MainMenu_MapSelectorReady; until then a Connect press is held, not lost.
+let mapSelectorReady = false;
+const READY_TIMEOUT = 5; // seconds to wait for the ready answer before trying anyway
 
 // Column layout — shared between the header and every row so they line up.
 const COLS: { key: SortKey; label: string; width: string; align: 'left' | 'right' }[] = [
@@ -73,9 +82,26 @@ class CssMapSelectorHandler {
 	filterBtns: { key: Category; panel: Panel }[] = [];
 	rowDownloadedLabels: { id: number; label: Label }[] = []; // Downloaded cells, for live install updates
 	connectingMapId: number | null = null; // map we last pressed Connect on (for download feedback)
+	// Map that Connect started downloading: it launches (in the gamemode picked when Connect was pressed) as soon
+	// as the download finishes, so a missing map is one press, like the main selector's Download + Play button
+	playAfterDownload: { id: number; gamemode: Gamemode | null } | null = null;
+	// A Connect press made before the main map selector was ready; sent as soon as it is
+	heldConnect: { id: number; gamemode: Gamemode | null } | null = null;
+	heldConnectTimeout: uuid | null = null;
 	dlSize = 0; // total bytes of the in-flight download (from MapDownload_Size)
 
+	// Leaderboards popup for the selected map (top 10 + group cutoffs + where you place)
+	leaderboard = new MapLeaderboardPopup('MapLb');
+
 	constructor() {
+		$.RegisterForUnhandledEvent('MainMenuPageHidden', () => this.leaderboard.close());
+		$.RegisterForUnhandledEvent('MainMenu_MapSelectorReady', () => {
+			mapSelectorReady = true;
+			this.releaseHeldConnect();
+		});
+		// Ask for it right away (this script loads with the page), so it's ready before the first Connect
+		$.DispatchEvent('MainMenu_PreloadMapSelector');
+
 		// Re-scan when the page is shown if the cache is empty (e.g. opened before the cache was ready).
 		$.RegisterForUnhandledEvent('MainMenuPageShown', (page: string) => {
 			if (page === 'CssMapSelector' && !scanCache && !scanning) this.scan();
@@ -106,7 +132,9 @@ class CssMapSelectorHandler {
 			this.setStatus(`${this.nameFor(id)}: downloading… ${pct}%`);
 		});
 		$.RegisterForUnhandledEvent('MapDownload_End', (id, error) => {
-			if (id !== this.connectingMapId) return;
+			const pending = this.playAfterDownload?.id === id ? this.playAfterDownload : null;
+			if (pending) this.playAfterDownload = null;
+			if (id !== this.connectingMapId && !pending) return;
 			this.dlSize = 0;
 			if (!error) {
 				// Mark installed in the cached snapshot and flip the row's Downloaded cell in place.
@@ -120,11 +148,18 @@ class CssMapSelectorHandler {
 					} catch {}
 				}
 			}
-			this.setStatus(
-				error
-					? `${this.nameFor(id)}: download failed.`
-					: `${this.nameFor(id)}: downloaded — press Connect to play.`
-			);
+			this.updateConnectButton();
+
+			if (error) {
+				this.setStatus(`${this.nameFor(id)}: download failed.`);
+				return;
+			}
+			if (pending) {
+				this.setStatus(`${this.nameFor(id)}: downloaded — launching…`);
+				this.launchDownloaded(id, pending.gamemode);
+			} else {
+				this.setStatus(`${this.nameFor(id)}: downloaded — launching…`); // the game plays it (MapSelector_TryPlayMap)
+			}
 		});
 		// Fires after a play attempt: true = the map started (menu will close), false = downloading/failed.
 		$.RegisterForUnhandledEvent('MapSelector_TryPlayMap_Outcome', (wasSuccessful) => {
@@ -134,6 +169,11 @@ class CssMapSelectorHandler {
 
 	/** Fires once the page is actually shown (the root panel's onload). */
 	onLoad() {
+		// Restore the search box (the page panel is rebuilt on re-open, the module state isn't)
+		const entry = $<TextEntry>('#CssMapsSearch');
+		if (entry && entry.text !== searchText) entry.text = searchText;
+		this.updateSearchClear();
+		if (!mapSelectorReady) $.DispatchEvent('MainMenu_PreloadMapSelector');
 		if (scanCache) this.buildAll();
 		else if (!scanning) this.scan();
 	}
@@ -242,6 +282,13 @@ class CssMapSelectorHandler {
 
 		if (!ignoreFilter && !filters[category]) return null;
 
+		const author = getAuthorNames(sd) || '—';
+		if (!ignoreFilter && searchTerms.length > 0) {
+			const name = sd.name.toLowerCase();
+			const authors = author.toLowerCase();
+			if (!searchTerms.every((term) => name.includes(term) || authors.includes(term))) return null;
+		}
+
 		// Local completion (same model as the Stats page): climb's Pro/Teleport are leaderboard
 		// classifications, but runs are recorded at run-style 0, so map those back before the lookup.
 		const trackStyle = style === Style.PRO || style === Style.TELEPORT ? 0 : style;
@@ -253,7 +300,7 @@ class CssMapSelectorHandler {
 			downloaded: map.mapFileExists,
 			completed,
 			tier: tier ?? board?.tier ?? 0,
-			author: getAuthorNames(sd) || '—',
+			author,
 			// info.creationDate = the map's authored creation date.
 			date: this.fmtDate(sd.info?.creationDate),
 			// "Date Added" = when the map went live: released date (info.approvedDate) for approved
@@ -394,7 +441,9 @@ class CssMapSelectorHandler {
 				status.visible = true;
 				status.text = available.length === 0
 					? 'No maps found in the cache. Make sure you are online, then press Refresh.'
-					: 'No maps match the current filters.';
+					: searchTerms.length > 0
+						? 'No maps match the current search.'
+						: 'No maps match the current filters.';
 			} else {
 				status.visible = false;
 			}
@@ -431,7 +480,7 @@ class CssMapSelectorHandler {
 			return lbl;
 		};
 
-		cellText(rowPanel, row.name, COLS[0], row.category === 'beta' ? 'cssmaps__cell-text--beta' : '');
+		cellText(rowPanel, row.name, COLS[0], row.category === 'ranked' ? '' : `cssmaps__cell-text--${row.category}`);
 		const dlLabel = cellText(rowPanel, row.downloaded ? '✓' : '', COLS[1]);
 		if (row.downloaded) {
 			try {
@@ -465,6 +514,37 @@ class CssMapSelectorHandler {
 		this.renderList();
 	}
 
+	searchSchedule: uuid | null = null;
+
+	/** Search box typing: debounced so a big list isn't rebuilt on every keystroke. */
+	onSearchChanged() {
+		const text = $<TextEntry>('#CssMapsSearch')?.text ?? '';
+		if (text === searchText) return;
+		searchText = text;
+		searchTerms = text.toLowerCase().split(/\s+/).filter(Boolean);
+		this.updateSearchClear();
+
+		if (this.searchSchedule != null) {
+			try {
+				$.CancelScheduled(this.searchSchedule);
+			} catch {}
+		}
+		this.searchSchedule = $.Schedule(0.15, () => {
+			this.searchSchedule = null;
+			this.renderList();
+		});
+	}
+
+	clearSearch() {
+		const entry = $<TextEntry>('#CssMapsSearch');
+		if (entry) entry.text = ''; // fires ontextentrychange -> onSearchChanged
+		this.onSearchChanged();
+	}
+
+	updateSearchClear() {
+		$<Panel>('#CssMapsSearchClear')?.SetHasClass('cssmaps__search-clear--shown', searchText.length > 0);
+	}
+
 	toggleFilter(cat: Category) {
 		filters[cat] = !filters[cat];
 		this.highlightFilters();
@@ -493,25 +573,111 @@ class CssMapSelectorHandler {
 	updateConnectButton() {
 		const btn = $<Button>('#CssMapsConnect');
 		if (btn) btn.enabled = selectedMapId != null;
+		const lb = $<Button>('#CssMapsLeaderboards');
+		if (lb) lb.enabled = selectedMapId != null;
 	}
 
-	/** Connect = download or launch the selected map. */
+	/**
+	 * Connect = the main selector's Play button for the selected map, in the selected gamemode tab: plays it if
+	 * installed, otherwise downloads it and plays it once the download finishes.
+	 */
 	connect() {
 		if (selectedMapId == null) return;
-		const map = (scanCache ?? []).find((m) => m.staticData.id === selectedMapId);
+		const gamemode = selectedMode;
+
+		if (!mapSelectorReady) {
+			// Hold the press until the main map selector (which handles play/download) has loaded
+			this.heldConnect = { id: selectedMapId, gamemode };
+			this.setStatus(`${this.nameFor(selectedMapId)}: preparing…`);
+			$.DispatchEvent('MainMenu_PreloadMapSelector');
+			if (this.heldConnectTimeout == null) {
+				this.heldConnectTimeout = $.Schedule(READY_TIMEOUT, () => {
+					this.heldConnectTimeout = null;
+					this.releaseHeldConnect();
+				});
+			}
+			return;
+		}
+
+		this.playMap(selectedMapId, gamemode);
+	}
+
+	/** Send a Connect press that was waiting on the main map selector. */
+	releaseHeldConnect() {
+		if (this.heldConnectTimeout != null) {
+			try {
+				$.CancelScheduled(this.heldConnectTimeout);
+			} catch {}
+			this.heldConnectTimeout = null;
+		}
+		const held = this.heldConnect;
+		this.heldConnect = null;
+		if (held) this.playMap(held.id, held.gamemode);
+	}
+
+	/** Fresh map data from the cache — the scan snapshot's mapFileExists goes stale as maps are downloaded. */
+	freshMapData(id: number): MapCacheAPI.MapData | null {
+		const cached = (scanCache ?? []).find((m) => m.staticData.id === id) ?? null;
+		let map: MapCacheAPI.MapData | null = null;
+		try {
+			map = MapCacheAPI.GetMapData(id);
+		} catch {
+			map = null;
+		}
+		if (map && cached) cached.mapFileExists = map.mapFileExists;
+		return map ?? cached;
+	}
+
+	playMap(id: number, gamemode: Gamemode | null) {
+		const map = this.freshMapData(id);
 		if (!map) return;
 		const name = map.staticData.name;
-		this.connectingMapId = map.staticData.id;
+		this.connectingMapId = id;
 		this.dlSize = 0;
-		// Downloaded maps launch immediately (loads are fast) — no status message; a "Launching…" line
-		// would only linger, still showing the next time the menu is reopened. Only downloads, which take
-		// time and have no other feedback in this list, get a status line.
-		if (!map.mapFileExists) {
-			this.setStatus(`${name}: starting download… (Connect again once done)`);
+
+		let meta: Gamemode | null = null;
+		try {
+			meta = GameModeAPI.GetMetaGameMode();
+		} catch {
+			meta = null;
 		}
-		$.Msg(`[CssMaps] connect: ${name} (id ${map.staticData.id}) fileExists=${map.mapFileExists} gm=${selectedMode}`);
-		// selectedMode drives which gamemode the map launches in (null = no override).
-		handlePlayMap(map, selectedMode);
+		const override = gamemode != null && gamemode !== meta ? gamemode : null;
+		$.Msg(`[CssMaps] connect: ${name} (id ${id}) fileExists=${map.mapFileExists} gm=${gamemode} override=${override}`);
+
+		if (map.mapFileExists) {
+			// Installed: exactly the Play button (handles required games, then MapSelector_TryPlayMap). No status
+			// line — loads are fast and a "Launching…" line would linger into the next menu visit.
+			this.setStatus('');
+			handlePlayMap(map, override);
+			return;
+		}
+
+		if (MapCacheAPI.MapQueuedForDownload(id) || this.playAfterDownload?.id === id) {
+			if (override != null) this.playAfterDownload = { id, gamemode: override };
+			this.setStatus(`${name}: already downloading — it will launch when done.`);
+			return;
+		}
+
+		this.setStatus(`${name}: starting download… it will launch when done.`);
+		if (override == null) {
+			// Same as the Play button on a missing map: the game downloads it and plays it when done
+			this.playAfterDownload = null;
+			handlePlayMap(map);
+		} else {
+			// The game's download-then-play ignores a gamemode override, so download only and launch from
+			// MapDownload_End in the tab's gamemode
+			this.playAfterDownload = { id, gamemode: override };
+			$.DispatchEvent('MapSelector_DownloadMap', id);
+		}
+	}
+
+	/** Launch a map that just finished downloading (a Connect press with a gamemode override). */
+	launchDownloaded(id: number, gamemode: Gamemode | null) {
+		const map = this.freshMapData(id);
+		if (!map) return;
+		map.mapFileExists = true; // the download just succeeded; the cache entry can lag behind MapDownload_End
+		$.Msg(`[CssMaps] download finished, launching ${map.staticData.name} (id ${id}) gm=${gamemode}`);
+		handlePlayMap(map, gamemode);
 	}
 
 	/** Map name for an id, from the scan cache (for download-status messages). */
@@ -528,6 +694,26 @@ class CssMapSelectorHandler {
 	}
 
 	/** Close (title-bar X) — return to the CS:S menu. Cross-context, so via a global event. */
+	/** Leaderboards button: the selected map's main-track board in the selected gamemode tab's default style. */
+	openLeaderboard() {
+		if (selectedMapId == null || selectedMode == null) return;
+		const map = (scanCache ?? []).find((m) => m.staticData.id === selectedMapId);
+		if (!map) return;
+		const style = GamemodeDefaultUIStyle.get(selectedMode) ?? Style.NORMAL;
+		const images = (map.staticData.images ?? [])
+			.map((img) => img.medium || img.large || img.small || img.xl)
+			.filter((url): url is string => Boolean(url));
+		void this.leaderboard.open(map.staticData.id, selectedMode, style, map.staticData.name, images);
+	}
+
+	closeLeaderboard() {
+		this.leaderboard.close();
+	}
+
+	refreshLeaderboard() {
+		this.leaderboard.refresh();
+	}
+
 	close() {
 		$.DispatchEvent('MainMenu_ClosePage');
 	}
@@ -570,7 +756,7 @@ class CssMapSelectorHandler {
 	setStatus(text: string) {
 		const status = $<Label>('#CssMapsStatus');
 		if (status) {
-			status.visible = true;
+			status.visible = text.length > 0;
 			status.text = text;
 		}
 	}

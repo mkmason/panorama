@@ -89,6 +89,12 @@ export class TrackSelectorHandler {
 
 	connectLeaderboards(leaderboards: Leaderboards) {
 		this.leaderboards = leaderboards;
+		this.attachStyleSelectorToLeaderboards();
+	}
+
+	/** The Classic leaderboard style shows the style dropdown inside the leaderboard (see attachStyleSelector). */
+	private attachStyleSelectorToLeaderboards() {
+		if (this.leaderboards && this.styleSelector) this.leaderboards.handler.attachStyleSelector(this.styleSelector);
 	}
 
 	setIsOnMapSelector(visible: boolean) {
@@ -97,6 +103,7 @@ export class TrackSelectorHandler {
 
 	connectStyleSelector(styleSelector: StyleSelector) {
 		this.styleSelector = styleSelector;
+		this.attachStyleSelectorToLeaderboards();
 	}
 
 	connectEndOfRun(endOfRun: EndOfRun) {
@@ -237,6 +244,9 @@ export class TrackSelectorHandler {
 			return groupedContainers.get(type)!;
 		};
 
+		// Mirrored into the Classic leaderboard's track dropdown below
+		const classicTracks: { key: string; label: string }[] = [];
+
 		tracks.forEach((track) => {
 			if (track.type === LeaderboardType.HIDDEN && this.isOnMapSelector) return;
 
@@ -299,6 +309,7 @@ export class TrackSelectorHandler {
 			if (this.leaderboards) {
 				trackPanel.SetPanelEvent('onselect', () => {
 					this.selectedTrackKey = key;
+					this.leaderboards?.handler.setClassicSelectedTrack(key);
 					this.applyTrackSelection(track);
 				});
 			}
@@ -308,6 +319,11 @@ export class TrackSelectorHandler {
 				: isStage
 					? `${$.Localize('#Leaderboards_Tracks_Stage')} ${track.trackNum}`
 					: `${$.Localize('#Leaderboards_Tracks_Bonus')} ${track.trackNum}`;
+
+			classicTracks.push({
+				key,
+				label: isMain ? `${trackLabel} Track` : trackLabel // "Main Track", as the old dropdown read
+			});
 
 			this.populateTrackPanel(trackPanel, {
 				track: trackLabel,
@@ -346,6 +362,19 @@ export class TrackSelectorHandler {
 				}
 			}
 		}
+
+		this.syncClassicTracks(classicTracks);
+	}
+
+	/**
+	 * Mirror the rendered tracks into the Classic leaderboard's track dropdown. Called at the end of renderTracks, once
+	 * the selection is settled, so the dropdown always shows the selected track. Picking one selects its row here,
+	 * whose onselect loads it into the leaderboard exactly as a click would.
+	 */
+	private syncClassicTracks(classicTracks: { key: string; label: string }[]) {
+		this.leaderboards?.handler.setClassicTracks(classicTracks, this.selectedTrackKey, (pick) =>
+			this.trackPanels.get(pick)?.SetSelected(true)
+		);
 	}
 
 	updateEorButtonVisibility(): void {

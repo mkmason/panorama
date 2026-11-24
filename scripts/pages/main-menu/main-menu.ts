@@ -2,6 +2,9 @@ import { OnPanelLoad, PanelHandler } from 'util/module-helpers';
 import AuthenicationResult = MomentumAPI.AuthenicationResult;
 import { Role } from 'common/web/enums/role.enum';
 
+/** CS:S menu pages shown as popup windows over the menu (each has a backdrop that closes it). */
+const CSS_POPUP_PAGES = new Set<string>(['CssMapSelector', 'CssLobbyList', 'CssSettings', 'Stats']);
+
 export enum Page {
 	MAP_SELECTOR = 'MapSelection',
 	LEARN = 'Learn',
@@ -76,6 +79,9 @@ class MainMenuHandler implements OnPanelLoad {
 		$.RegisterForUnhandledEvent('ShowPauseMenu', () => this.onShowPauseMenu());
 		$.RegisterForUnhandledEvent('HidePauseMenu', () => this.onHidePauseMenu());
 		$.RegisterForUnhandledEvent('MapSelector_OnLoaded', () => this.onMapSelectorLoaded());
+		// The CS:S map selector plays/downloads through the main map selector's C++ panel (MomentumMapSelect handles
+		// MapSelector_TryPlayMap / _DownloadMap), which only exists once that page is loaded -> load it hidden on request
+		$.RegisterForUnhandledEvent('MainMenu_PreloadMapSelector', () => this.preloadMapSelector());
 		$.RegisterForUnhandledEvent('ReloadMainMenuBackground', () => this.setMainMenuBackground());
 		// Lets custom pages in their own script context (e.g. the CS:S map selector) close back to the menu.
 		$.RegisterForUnhandledEvent('MainMenu_ClosePage', () => this.hideMainMenuPageContent());
@@ -220,31 +226,7 @@ class MainMenuHandler implements OnPanelLoad {
 			return;
 		}
 
-		// Check to see if page to show exists. If not load the xml file.
-		if (!this.panels.cp.FindChildInLayoutFile(page)) {
-			const newPanel = $.CreatePanel('Panel', this.panels.pageContent, page);
-
-			newPanel.LoadLayout(`file://{resources}/layout/pages/${layoutFile}.xml`, false, false);
-			newPanel.RegisterForReadyEvents(true);
-
-			// Handler that catches PropertyTransitionEndEvent event for this panel.
-			// Check if the panel is transparent then collapse it.
-			$.RegisterEventHandler('PropertyTransitionEnd', newPanel, (panelName, propertyName) => {
-				// Panel is visible and fully transparent
-				if (
-					newPanel.id === panelName &&
-					propertyName === 'opacity' &&
-					newPanel.visible &&
-					newPanel.IsTransparent()
-				) {
-					// Set visibility to false and unload resources
-					newPanel.visible = false;
-					newPanel.SetReadyForDisplay(false);
-					return true;
-				}
-				return false;
-			});
-		}
+		this.ensurePage(page, layoutFile);
 
 		// If we have an active tab and it is different from the selected tab, hide it.
 		// Then show the selected tab.
@@ -271,6 +253,53 @@ class MainMenuHandler implements OnPanelLoad {
 		this.showMainMenuPageContent();
 	}
 
+	mapSelectorLoaded = false;
+
+	/** Load the main map selector page without showing it, then tell the CS:S map selector it can play maps. */
+	preloadMapSelector() {
+		if (this.mapSelectorLoaded) {
+			$.DispatchEvent('MainMenu_MapSelectorReady');
+			return;
+		}
+		if (this.ensurePage(Page.MAP_SELECTOR, 'map-selector/wrapper')) {
+			const panel = this.panels.cp.FindChildInLayoutFile(Page.MAP_SELECTOR);
+			panel.visible = false;
+			panel.AddClass('mainmenu__page-container--hidden');
+		}
+		// MainMenu_MapSelectorReady follows from onMapSelectorLoaded
+	}
+
+	/** Create a page's panel and load its layout if it doesn't exist yet. Returns true if it was just created. */
+	ensurePage(page: Page, layoutFile: string): boolean {
+		// Check to see if page to show exists. If not load the xml file.
+		if (!this.panels.cp.FindChildInLayoutFile(page)) {
+			const newPanel = $.CreatePanel('Panel', this.panels.pageContent, page);
+
+			newPanel.LoadLayout(`file://{resources}/layout/pages/${layoutFile}.xml`, false, false);
+			newPanel.RegisterForReadyEvents(true);
+
+			// Handler that catches PropertyTransitionEndEvent event for this panel.
+			// Check if the panel is transparent then collapse it.
+			$.RegisterEventHandler('PropertyTransitionEnd', newPanel, (panelName, propertyName) => {
+				// Panel is visible and fully transparent
+				if (
+					newPanel.id === panelName &&
+					propertyName === 'opacity' &&
+					newPanel.visible &&
+					newPanel.IsTransparent()
+				) {
+					// Set visibility to false and unload resources
+					newPanel.visible = false;
+					newPanel.SetReadyForDisplay(false);
+					return true;
+				}
+				return false;
+			});
+			return true;
+		}
+		return false;
+	}
+
 	/**
 	 * Show the main menu page container and retract the drawer.
 	 */
@@ -279,7 +308,10 @@ class MainMenuHandler implements OnPanelLoad {
 
 		$.DispatchEvent('RetractDrawer');
 
-		this.panels.homeContent.AddClass('home--hidden');
+		// The CS:S pages are popup windows over the CS:S menu, which stays visible behind them
+		// (Stats also opens from the normal menu's nav, where it's a full page)
+		const popup = this.panels.cp.HasClass('mainmenu--css') && CSS_POPUP_PAGES.has(this.activePage);
+		this.panels.homeContent.SetHasClass('home--hidden', !popup);
 	}
 
 	/**
@@ -344,6 +376,7 @@ class MainMenuHandler implements OnPanelLoad {
 		// pause-menu nav is left alone. The lobby drawer is untouched. Independent of any background override.
 		const cssMode = backgroundVar === BackgroundMode.CSS;
 		if (this.panels.cp?.IsValid()) this.panels.cp.SetHasClass('mainmenu--css', cssMode);
+		this.setNavBarBlur(!cssMode);
 
 		// 1) A user-chosen background override (picked in the background selector) wins over the themed
 		//    default. A full http(s) URL (e.g. a nekos.best image) is shown directly; a `.webm` name → video;
@@ -719,7 +752,25 @@ class MainMenuHandler implements OnPanelLoad {
 	 * Handles the map selector load event to add blurs to some of the map selector panels.
 	 * Necessary to handle in here because map selector background is a part of the main menu background section.
 	 */
+	navBarBlurred = true; // MainMenuBackgroundBlur's blurrects include the nav bar from the layout
+
+	/**
+	 * The background blur covers the top nav bar's area (blurrects in main-menu.xml). The CS:S menu hides the nav
+	 * bar, but the blur still applied there, leaving a faint darker strip across the top: drop it in CS:S mode.
+	 */
+	setNavBarBlur(on: boolean) {
+		if (on === this.navBarBlurred) return;
+		const nav = $('#MainMenuNavBar');
+		const blur = this.panels.backgroundBlur;
+		if (!nav || !blur) return;
+		if (on) blur.AddBlurPanel(nav);
+		else blur.RemoveBlurPanel(nav);
+		this.navBarBlurred = on;
+	}
+
 	onMapSelectorLoaded() {
+		this.mapSelectorLoaded = true;
+		$.DispatchEvent('MainMenu_MapSelectorReady');
 		// for (const panel of ['MapSelectorLeft', 'MapDescription', 'MapInfoStats', 'Leaderboards'])
 		for (const panel of ['MapSelectorLeft', 'Leaderboards'])
 			this.panels.backgroundBlur?.AddBlurPanel($.GetContextPanel().FindChildTraverse(panel));
@@ -743,6 +794,12 @@ class MainMenuHandler implements OnPanelLoad {
 		if (!toDesktop) return; // currently don't handle disconnect prompts
 
 		$.DispatchEvent('MainMenuPauseGame'); // make sure game is paused so we can see the popup if hit from a keybind in-game
+
+		// CS:S main menu: its own "Quit game" dialog in the CS:S look
+		if (this.panels.cp?.HasClass('mainmenu--css')) {
+			UiToolkitAPI.ShowCustomLayoutPopup('CssQuit', 'file://{resources}/layout/modals/popups/css-quit.xml');
+			return;
+		}
 
 		UiToolkitAPI.ShowGenericPopupTwoOptionsBgStyle(
 			$.Localize('#Action_Quit'),

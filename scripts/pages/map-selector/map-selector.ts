@@ -5,6 +5,17 @@ import { scaleWidthToAspectRatio } from 'util/functions';
 import { MapUserCompletions } from 'common/maps';
 import { Style } from 'common/web/enums/style.enum';
 import { handlePlayMap } from 'common/maps';
+import { getAllCredits } from 'common/maps';
+import { getUserMapDataTrack } from 'common/leaderboard';
+import type { MMap } from 'common/web/types/models/models';
+import { MapStatus, MapStatuses } from 'common/web/enums/map-status.enum';
+import { MapCreditType } from 'common/web/enums/map-credit-type.enum';
+
+/** Localize, falling back to English when the key is gone from the game's localization (Classic map info strings). */
+function localizeOr(key: string, fallback: string): string {
+	const text = $.Localize(key);
+	return !text || text === key ? fallback : text;
+}
 
 const REFRESH_COOLDOWN = 1000 * 10; // 10 seconds
 
@@ -54,6 +65,20 @@ class MapSelectorHandler implements OnPanelLoad {
 			beta: $<Button>('#MapListBeta')
 		},
 		refreshIcon: $<Image>('#RefreshIcon'),
+		classicInfo: {
+			root: $<Panel>('#ClassicMapInfo'),
+			descriptionContainer: $<Panel>('#ClassicMapDescriptionContainer'),
+			credits: $<Panel>('#ClassicMapCredits'),
+			status: $<Panel>('#ClassicMapStatus'),
+			changelog: $<Panel>('#ClassicMapChangelog'),
+			changelogList: $<Panel>('#ClassicMapChangelogList'),
+			dates: $<Panel>('#ClassicMapDates'),
+			stats: $<Panel>('#ClassicMapStats'),
+			pb: $<Label>('#ClassicMapPB'),
+			noPB: $<Label>('#ClassicMapNoPB'),
+			wr: $<Label>('#ClassicMapWR'),
+			noWR: $<Label>('#ClassicMapNoWR')
+		},
 		blurPanel: this.findBackgroundBlurPanel()
 	};
 
@@ -98,6 +123,11 @@ class MapSelectorHandler implements OnPanelLoad {
 		$.RegisterForUnhandledEvent('MapCache_CompletionsUpdate', (completions) =>
 			this.onCompletionsUpdate(completions)
 		);
+		// Live stats (favourites / completions / WR) for the Classic map info panel
+		$.RegisterForUnhandledEvent('MapSelector_SelectedOnlineDataUpdate', (onlineMapData) =>
+			this.updateClassicMapStats(onlineMapData)
+		);
+		this.initClassicMapInfoStrings();
 
 		this.panels.nStateButtons.forEach((panel) =>
 			$.RegisterEventHandler('NStateButtonStateChanged', panel, (panelID, state) =>
@@ -340,6 +370,7 @@ class MapSelectorHandler implements OnPanelLoad {
 
 		this.components.mapInfo.handler.updateMapInfo(mapData);
 		this.components.trackSelector.handler.updateMapData(mapData.staticData);
+		this.updateClassicMapInfo(mapData.staticData, mapData.userData);
 
 		// Styles are per-gamemode, so the selector rebuilds (and resets to the mode's default style)
 		// whenever the meta mode changes. Otherwise it keeps whatever the user last picked.
@@ -401,6 +432,196 @@ class MapSelectorHandler implements OnPanelLoad {
 	 */
 	private syncSelectedStyle() {
 		this.panels.cp.setSelectedStyle(this.components.styleSelector.handler.style);
+	}
+
+	/**
+	 * Headings / tooltips for the Classic map info panel. Uses the old map selector's localization keys, with English
+	 * fallbacks in case upstream drops them from the game's localization.
+	 */
+	private initClassicMapInfoStrings() {
+		const set = (id: string, key: string, fallback: string) => {
+			const label = this.panels.classicInfo.root.FindChildTraverse<Label>(id);
+			if (label) label.text = localizeOr(key, fallback);
+		};
+		set('ClassicHeadingDescription', '#MapSelector_Info_Description', 'Description');
+		set('ClassicHeadingStatus', '#MapSelector_Status_Heading', 'Submission Status');
+		set('ClassicHeadingChangelog', '#MapSelector_Info_Changelog_Heading', 'Changelog');
+		set('ClassicHeadingDate', '#MapSelector_Info_DateCreated', 'Date Created');
+		set('ClassicHeadingStats', '#MapSelector_Stats', 'Statistics');
+		set('ClassicMapNoPB', '#Common_NA', 'N/A');
+		set('ClassicMapNoWR', '#Common_NA', 'N/A');
+
+		// TooltipPanel text comes from dialog variables (see tooltip="{s:classic_tip_*}" in map-selector.xml)
+		const tips: [string, string, string][] = [
+			['classic_tip_favorites', '#MapSelector_Stats_Favorites', 'Favorites'],
+			['classic_tip_unique', '#MapSelector_Stats_UniqueCompletions', 'Unique Completions'],
+			['classic_tip_pb', '#Common_PersonalBest', 'Personal Best'],
+			['classic_tip_total', '#MapSelector_Stats_TotalCompletions', 'Total Completions'],
+			['classic_tip_rate', '#MapSelector_Stats_PercentCompletion', 'Completions per Player'],
+			['classic_tip_wr', '#Common_WorldRecord', 'World Record']
+		];
+		for (const [variable, key, fallback] of tips) {
+			this.panels.classicInfo.root.SetDialogVariable(variable, localizeOr(key, fallback));
+		}
+	}
+
+	/** Fill the Classic map info panel (pre-merge map selector's updateSelectedMapInfo / updateSelectedMapCredits). */
+	private updateClassicMapInfo(staticData: MMap, userData?: MapCacheAPI.UserData) {
+		const c = this.panels.classicInfo;
+		const info = c.root;
+		const gamemode = GameModeAPI.GetMetaGameMode();
+
+		info.SetDialogVariable('classic_description', staticData.info?.description ?? '');
+		c.descriptionContainer.SetHasClass('hide', !staticData.info?.description);
+
+		info.SetDialogVariable(
+			'classic_date',
+			staticData.info?.creationDate ? new Date(staticData.info.creationDate).toLocaleDateString() : ''
+		);
+		c.dates.SetHasClass('hide', !staticData.info?.creationDate);
+
+		const pb = getUserMapDataTrack(userData, gamemode);
+		if (pb) info.SetDialogVariableFloat('classic_personal_best', pb.time);
+		c.pb.visible = !!pb;
+		c.noPB.visible = !pb;
+
+		const statuses = new Map([
+			[MapStatus.PRIVATE_TESTING, ['PrivateTesting', 'Private Testing']],
+			[MapStatus.CONTENT_APPROVAL, ['ContentApproval', 'Content Approval']],
+			[MapStatus.PUBLIC_TESTING, ['PublicTesting', 'Public Testing']],
+			[MapStatus.FINAL_APPROVAL, ['FinalApproval', 'Final Approval']]
+		]);
+		const inSubmission = MapStatuses.IN_SUBMISSION.includes(staticData.status);
+		c.status.visible = inSubmission;
+		c.changelog.visible = false;
+		if (inSubmission) {
+			const [key, fallback] = statuses.get(staticData.status) ?? ['', ''];
+			info.SetDialogVariable('classic_status', localizeOr(`#MapSelector_Status_${key}`, fallback));
+			info.SetDialogVariable(
+				'classic_status_tooltip',
+				localizeOr(`#MapSelector_Status_${key}_Tooltip`, fallback)
+			);
+
+			const versions = staticData.versions ?? [];
+			c.changelog.visible = versions.length > 1;
+			c.changelogList.RemoveAndDeleteChildren();
+			[...versions]
+				// Not always ordered by versionNum, so sort newest first
+				.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+				.forEach(({ changelog }, i, arr) => {
+					$.CreatePanel('Label', c.changelogList, '', {
+						class: 'mapselector-map-info__h3',
+						text: localizeOr('#MapSelector_Info_Changelog_Version', 'Version %version%').replace(
+							'%version%',
+							(arr.length - i).toString()
+						)
+					});
+					// The first version doesn't necessarily have a changelog
+					if (changelog) {
+						$.CreatePanel('Label', c.changelogList, '', {
+							class: 'mapselector-map-info__changelog-text',
+							text: changelog
+						});
+					}
+				});
+		} else {
+			info.SetDialogVariable('classic_status', '');
+			info.SetDialogVariable('classic_status_tooltip', '');
+		}
+
+		this.updateClassicMapCredits(staticData);
+
+		// Live stats arrive via MapSelector_SelectedOnlineDataUpdate; spin until then
+		c.stats.AddClass('mapselector-stats--loading');
+	}
+
+	/** Credits grid, two credit types per row (Panorama's right-wrap is too buggy to lay this out in CSS). */
+	private updateClassicMapCredits(staticData: MMap) {
+		const container = this.panels.classicInfo.credits;
+		container.RemoveAndDeleteChildren();
+
+		const types: [MapCreditType, string, string][] = [
+			[MapCreditType.AUTHOR, '#MapSelector_Info_Authors', 'Authors'],
+			[MapCreditType.CONTRIBUTOR, '#MapSelector_Info_Contributors', 'Contributors'],
+			[MapCreditType.SPECIAL_THANKS, '#MapSelector_Info_SpecialThanks', 'Special Thanks'],
+			[MapCreditType.TESTER, '#MapSelector_Info_Testers', 'Testers']
+		];
+		const placeholderTip = localizeOr(
+			'#MapSelector_Info_Placeholder',
+			'This user does not have a Momentum account'
+		);
+
+		types
+			.map(([type, key, fallback]) => [localizeOr(key, fallback), getAllCredits(staticData, type)] as const)
+			.filter(([, credits]) => credits.length > 0)
+			.forEach(([heading, credits], i) => {
+				const row =
+					i % 2 === 0
+						? $.CreatePanel('Panel', container, '', { class: 'mapselector-credits__row' })
+						: container.Children().at(-1);
+
+				const col = $.CreatePanel('Panel', row, '', { class: 'mapselector-credits__col' });
+				$.CreatePanel('Label', col, '', { text: heading, class: 'mapselector-map-info__h2' });
+
+				credits.forEach(({ alias, steamID }, j) => {
+					const panel = $.CreatePanel('Panel', col, '', { class: 'mapselector-credits__credit' });
+
+					if (steamID) {
+						$.CreatePanel('AvatarImage', panel, '', {
+							class: 'mapselector-credits__avatar',
+							steamid: steamID
+						});
+					} else {
+						const placeholder = $.CreatePanel('Image', panel, `ClassicCreditPlaceholder${i}_${j}`, {
+							class: 'mapselector-credits__placeholder',
+							src: 'file://{images}/help.svg',
+							textureheight: '32px'
+						});
+						placeholder.SetPanelEvent('onmouseover', () =>
+							UiToolkitAPI.ShowTextTooltip(placeholder.id, placeholderTip)
+						);
+						placeholder.SetPanelEvent('onmouseout', () => UiToolkitAPI.HideTextTooltip());
+					}
+
+					const name = $.CreatePanel('Label', panel, `ClassicCreditName${i}_${j}`, {
+						text: alias,
+						class: 'mapselector-credits__text mapselector-credits__name'
+					});
+
+					if (steamID) {
+						name.AddClass('mapselector-credits__name--steam');
+						panel.SetPanelEvent('onactivate', () => {
+							UiToolkitAPI.ShowSimpleContextMenu(name.id, '', [
+								{
+									label: $.Localize('#Action_ShowSteamProfile'),
+									jsCallback: () => SteamOverlayAPI.OpenToProfileID(steamID)
+								}
+							]);
+						});
+					}
+				});
+			});
+	}
+
+	/** Live stats for the Classic map info panel (pre-merge onSelectedOnlineDataUpdated). */
+	private updateClassicMapStats(onlineMapData: MMap) {
+		const c = this.panels.classicInfo;
+		const stats = c.stats;
+		stats.RemoveClass('mapselector-stats--loading');
+		if (!onlineMapData) return;
+
+		const unique = onlineMapData.stats?.uniqueCompletions ?? 0;
+		const total = onlineMapData.stats?.completions ?? 0;
+		stats.SetDialogVariableInt('classic_unique_completions', unique);
+		stats.SetDialogVariableInt('classic_total_completions', total);
+		stats.SetDialogVariableInt('classic_favorites', onlineMapData.stats?.favorites ?? 0);
+		// Average completions per player that finished it (the old panel's % slot was never filled in)
+		stats.SetDialogVariable('classic_completion_rate', unique > 0 ? (total / unique).toFixed(2) : '-');
+
+		const wr = onlineMapData.worldRecord;
+		if (wr) stats.SetDialogVariableFloat('classic_world_record', wr.time ?? 0);
+		c.wr.visible = !!wr;
+		c.noWR.visible = !wr;
 	}
 
 	onActionButtonPressed() {

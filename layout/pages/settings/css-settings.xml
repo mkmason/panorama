@@ -1,0 +1,192 @@
+<root>
+	<styles>
+		<include src="file://{resources}/styles/main.scss" />
+	</styles>
+
+	<scripts>
+		<include type="module" src="file://{scripts}/pages/settings/settings.ts" />
+	</scripts>
+
+	<!--
+		CS:S-styled Options window (opened from the CS:S main menu), in the same look as the CS:S map selector.
+		Runs the regular settings script on the regular tab pages, so every setting is the same one as on the normal
+		Settings page. The IDs below (SettingsNav, the tab/sub-tab radio IDs from common/settings.ts SettingsTabs,
+		SettingsContent, SettingsInfo*, SettingsSearch*) are what settings.ts / search.ts look up.
+		#CssOptions switches settings.ts into its CS:S mode (see SettingsHandler.cssSkin).
+	-->
+	<Panel class="mainmenu__page cssopts-page">
+		<!-- Popup window over the CS:S menu: clicking anywhere outside the window closes it, like its X. The window
+		     catches its own clicks (hittest + empty onactivate) so they don't fall through to this backdrop. -->
+		<Button class="css-window-backdrop" onactivate="$.DispatchEvent('MainMenu_ClosePage');" />
+		<Panel id="CssOptions" class="cssopts css-window" hittest="true" onactivate="">
+			<!-- Title bar -->
+			<Panel class="cssopts__titlebar">
+				<Label class="cssopts__title" text="Options" />
+				<Button class="cssopts__close" onactivate="$.DispatchEvent('MainMenu_ClosePage');">
+					<Image class="cssopts__close-icon" src="file://{images}/close.svg" textureheight="24" />
+				</Button>
+			</Panel>
+
+			<Panel id="SettingsNav" class="cssopts__nav">
+				<!-- Tab row + search -->
+				<Panel class="cssopts__tabrow">
+					<Panel class="cssopts__tabs">
+						<RadioButton id="InputRadio" class="cssopts__tab" group="CssSettingsNav" onactivate="SettingsHandler.navigateToTab('InputSettings')" selected="true">
+							<Label class="cssopts__tab-label" text="#Settings_Input_Title" />
+						</RadioButton>
+						<RadioButton id="AudioRadio" class="cssopts__tab" group="CssSettingsNav" onactivate="SettingsHandler.navigateToTab('AudioSettings')">
+							<Label class="cssopts__tab-label" text="#Settings_Audio" />
+						</RadioButton>
+						<RadioButton id="VideoRadio" class="cssopts__tab" group="CssSettingsNav" onactivate="SettingsHandler.navigateToTab('VideoSettings')">
+							<Label class="cssopts__tab-label" text="#Settings_Video" />
+						</RadioButton>
+						<RadioButton id="OnlineRadio" class="cssopts__tab" group="CssSettingsNav" onactivate="SettingsHandler.navigateToTab('OnlineSettings')">
+							<Label class="cssopts__tab-label" text="#Settings_Online" />
+						</RadioButton>
+						<RadioButton id="GameplayRadio" class="cssopts__tab" group="CssSettingsNav" onactivate="SettingsHandler.navigateToTab('GameplaySettings')">
+							<Label class="cssopts__tab-label" text="#Settings_Gameplay" />
+						</RadioButton>
+						<RadioButton id="InterfaceRadio" class="cssopts__tab" group="CssSettingsNav" onactivate="SettingsHandler.navigateToTab('InterfaceSettings')">
+							<Label class="cssopts__tab-label" text="#Settings_Interface" />
+						</RadioButton>
+					</Panel>
+
+					<Panel class="cssopts__search" acceptsfocus="true">
+						<Label class="cssopts__search-label" text="Search:" />
+						<Panel class="cssopts__search-field">
+							<TextEntry id="SettingsSearchTextEntry" class="cssopts__search-entry" maxchars="30" placeholder="#Settings_General_Search_Prompt" />
+							<Button id="SettingsSearchClear" class="cssopts__search-clear search__clearbutton--hidden" onactivate="SettingsSearchHandler.clearSearch()">
+								<Image class="cssopts__search-clear-icon" src="file://{images}/close.svg" textureheight="16" />
+							</Button>
+						</Panel>
+					</Panel>
+				</Panel>
+
+				<!-- Section links for the active tab (one row per tab, settings.ts shows only the active one: <radioid>Sub) -->
+				<Panel class="cssopts__subrow">
+					<Panel id="InputRadioSub" class="cssopts__subtabs settings-nav__subsection--hidden">
+						<RadioButton id="MouseRadio" class="cssopts__subtab" group="CssSettingsSubNav" onactivate="SettingsHandler.navigateToSubsection('InputSettings', 'MouseSubSection')">
+							<Label class="cssopts__subtab-label" text="#Settings_Mouse_Title" />
+						</RadioButton>
+						<RadioButton id="KeybindRadio" class="cssopts__subtab" group="CssSettingsSubNav" onactivate="SettingsHandler.navigateToSubsection('InputSettings', 'KeybindSubSection')">
+							<Label class="cssopts__subtab-label" text="#Settings_Keybinds_Title" />
+						</RadioButton>
+					</Panel>
+
+					<Panel id="AudioRadioSub" class="cssopts__subtabs settings-nav__subsection--hidden">
+						<RadioButton id="VolumeRadio" class="cssopts__subtab" group="CssSettingsSubNav" onactivate="SettingsHandler.navigateToSubsection('AudioSettings', 'VolumeSubSection')">
+							<Label class="cssopts__subtab-label" text="#Settings_Volume_Title" />
+						</RadioButton>
+						<RadioButton id="AudioDeviceRadio" class="cssopts__subtab" group="CssSettingsSubNav" onactivate="SettingsHandler.navigateToSubsection('AudioSettings', 'AudioDevicesSubSection')">
+							<Label class="cssopts__subtab-label" text="#Settings_AudioDevices_Title" />
+						</RadioButton>
+						<RadioButton id="TimerRadio" class="cssopts__subtab" group="CssSettingsSubNav" onactivate="SettingsHandler.navigateToSubsection('AudioSettings', 'TimerSubSection')">
+							<Label class="cssopts__subtab-label" text="#Settings_Timer_Title" />
+						</RadioButton>
+						<RadioButton id="WeaponSelRadio" class="cssopts__subtab" group="CssSettingsSubNav" onactivate="SettingsHandler.navigateToSubsection('AudioSettings', 'WeaponSelSubSection')">
+							<Label class="cssopts__subtab-label" text="#Settings_WeaponSelection_Title" />
+						</RadioButton>
+					</Panel>
+
+					<Panel id="VideoRadioSub" class="cssopts__subtabs settings-nav__subsection--hidden">
+						<RadioButton id="VideoSubRadio" class="cssopts__subtab" group="CssSettingsSubNav" onactivate="SettingsHandler.navigateToSubsection('VideoSettings', 'VideoSubSection')">
+							<Label class="cssopts__subtab-label" text="#Settings_Video_Title" />
+						</RadioButton>
+						<RadioButton id="AdvancedVideoRadio" class="cssopts__subtab" group="CssSettingsSubNav" onactivate="SettingsHandler.navigateToSubsection('VideoSettings', 'AdvancedVideoSubSection')">
+							<Label class="cssopts__subtab-label" text="#Settings_Render_Title" />
+						</RadioButton>
+						<RadioButton id="TextureReplaceRadio" class="cssopts__subtab" group="CssSettingsSubNav" onactivate="SettingsHandler.navigateToSubsection('VideoSettings', 'TextureReplaceSubSection')">
+							<Label class="cssopts__subtab-label" text="#Settings_TextureReplace_Title" />
+						</RadioButton>
+					</Panel>
+
+					<Panel id="OnlineRadioSub" class="cssopts__subtabs settings-nav__subsection--hidden">
+						<RadioButton id="ReplayRadio" class="cssopts__subtab" group="CssSettingsSubNav" onactivate="SettingsHandler.navigateToSubsection('OnlineSettings', 'ReplaySubSection')">
+							<Label class="cssopts__subtab-label" text="#Settings_OnlineReplay_Title" />
+						</RadioButton>
+						<RadioButton id="OnlineGhostRadio" class="cssopts__subtab" group="CssSettingsSubNav" onactivate="SettingsHandler.navigateToSubsection('OnlineSettings', 'OnlineGhostSubSection')">
+							<Label class="cssopts__subtab-label" text="#Settings_OnlineGhost_Title" />
+						</RadioButton>
+						<RadioButton id="GhostRadio" class="cssopts__subtab" group="CssSettingsSubNav" onactivate="SettingsHandler.navigateToSubsection('OnlineSettings', 'GhostSubSection')">
+							<Label class="cssopts__subtab-label" text="#Settings_OnlinePlayer_Title" />
+						</RadioButton>
+						<RadioButton id="RichPresenceRadio" class="cssopts__subtab" group="CssSettingsSubNav" onactivate="SettingsHandler.navigateToSubsection('OnlineSettings', 'RichPresenceSubSection')">
+							<Label class="cssopts__subtab-label" text="#Settings_RichPresence_Title" />
+						</RadioButton>
+					</Panel>
+
+					<Panel id="GameplayRadioSub" class="cssopts__subtabs settings-nav__subsection--hidden">
+						<RadioButton id="GameplayGeneralRadio" class="cssopts__subtab" group="CssSettingsSubNav" onactivate="SettingsHandler.navigateToSubsection('GameplaySettings', 'GameplayGeneralSubSection')">
+							<Label class="cssopts__subtab-label" text="#Settings_Gameplay" />
+						</RadioButton>
+						<RadioButton id="PaintRadio" class="cssopts__subtab" group="CssSettingsSubNav" onactivate="SettingsHandler.navigateToSubsection('GameplaySettings', 'PaintSubSection')">
+							<Label class="cssopts__subtab-label" text="#Settings_Paint_Title" />
+						</RadioButton>
+						<RadioButton id="SafeguardsRadio" class="cssopts__subtab" group="CssSettingsSubNav" onactivate="SettingsHandler.navigateToSubsection('GameplaySettings', 'SafeguardsSubSection')">
+							<Label class="cssopts__subtab-label" text="#Settings_Safeguards_Title" />
+						</RadioButton>
+						<RadioButton id="ZonesRadio" class="cssopts__subtab" group="CssSettingsSubNav" onactivate="SettingsHandler.navigateToSubsection('GameplaySettings', 'ZonesSubSection')">
+							<Label class="cssopts__subtab-label" text="#Settings_Zones_Title" />
+						</RadioButton>
+						<RadioButton id="RocketJumpRadio" class="cssopts__subtab" group="CssSettingsSubNav" onactivate="SettingsHandler.navigateToSubsection('GameplaySettings', 'RocketJumpSubSection')">
+							<Label class="cssopts__subtab-label" text="#Settings_RJ_Title" />
+						</RadioButton>
+						<RadioButton id="StickyJumpRadio" class="cssopts__subtab" group="CssSettingsSubNav" onactivate="SettingsHandler.navigateToSubsection('GameplaySettings', 'StickyJumpSubSection')">
+							<Label class="cssopts__subtab-label" text="#Settings_SJ_Title" />
+						</RadioButton>
+						<RadioButton id="ConcRadio" class="cssopts__subtab" group="CssSettingsSubNav" onactivate="SettingsHandler.navigateToSubsection('GameplaySettings', 'ConcSubSection')">
+							<Label class="cssopts__subtab-label" text="#Settings_Conc_Title" />
+						</RadioButton>
+						<RadioButton id="DefragRadio" class="cssopts__subtab" group="CssSettingsSubNav" onactivate="SettingsHandler.navigateToSubsection('GameplaySettings', 'DefragSubSection')">
+							<Label class="cssopts__subtab-label" text="#Settings_Defrag_Title" />
+						</RadioButton>
+					</Panel>
+
+					<Panel id="InterfaceRadioSub" class="cssopts__subtabs settings-nav__subsection--hidden">
+						<RadioButton id="HudCustomizerRadio" class="cssopts__subtab" group="CssSettingsSubNav" onactivate="SettingsHandler.navigateToSubsection('InterfaceSettings', 'HudCustomizerSubSection')">
+							<Label class="cssopts__subtab-label" text="#Settings_HudCustomizer_Title" />
+						</RadioButton>
+						<RadioButton id="UIRadio" class="cssopts__subtab" group="CssSettingsSubNav" onactivate="SettingsHandler.navigateToSubsection('InterfaceSettings', 'UISubSection')">
+							<Label class="cssopts__subtab-label" text="#Settings_Menu_Title" />
+						</RadioButton>
+						<RadioButton id="SpeedometerRadio" class="cssopts__subtab" group="CssSettingsSubNav" onactivate="SettingsHandler.navigateToSubsection('InterfaceSettings', 'SpeedometerSubSection')">
+							<Label class="cssopts__subtab-label" text="#Settings_Speedometer_Title" />
+						</RadioButton>
+						<RadioButton id="CrosshairRadio" class="cssopts__subtab" group="CssSettingsSubNav" onactivate="SettingsHandler.navigateToSubsection('InterfaceSettings', 'CrosshairSubSection')">
+							<Label class="cssopts__subtab-label" text="#Settings_Crosshair_Title" />
+						</RadioButton>
+						<RadioButton id="DamageIndicatorRadio" class="cssopts__subtab" group="CssSettingsSubNav" onactivate="SettingsHandler.navigateToSubsection('InterfaceSettings', 'DamageIndicatorSubSection')">
+							<Label class="cssopts__subtab-label" text="#Settings_DamageIndicator_Title" />
+						</RadioButton>
+					</Panel>
+				</Panel>
+			</Panel>
+
+			<!-- Sunken body: settings pages + description column -->
+			<Panel class="cssopts__body">
+				<Panel id="SettingsContent" class="cssopts__pages" />
+				<Panel id="SettingsInfo" class="settings-info cssopts__info settings-info--hidden">
+					<Panel class="settings-info__wrapper cssopts__info-wrapper">
+						<Label id="SettingsInfoTitle" class="cssopts__info-title" />
+						<Label id="SettingsInfoMessage" html="true" class="cssopts__info-text" />
+						<Label id="SettingsInfoConvar" html="true" class="cssopts__info-text cssopts__info-cvar" />
+						<Button id="SettingsInfoDocsButton" class="cssopts__btn cssopts__info-docs">
+							<Label class="cssopts__btn-text" text="#Settings_General_ViewDocs" />
+						</Button>
+					</Panel>
+				</Panel>
+			</Panel>
+
+			<!-- Bottom bar: settings apply as they change, so OK closes and Apply writes the config right away -->
+			<Panel class="cssopts__bottom">
+				<Panel class="w-fill" />
+				<Button class="cssopts__btn cssopts__btn--default" onactivate="$.DispatchEvent('MainMenu_ClosePage');">
+					<Label class="cssopts__btn-text" text="OK" />
+				</Button>
+				<Button class="cssopts__btn" onactivate="$.DispatchEvent('SettingsSave');">
+					<Label class="cssopts__btn-text" text="Apply" />
+				</Button>
+			</Panel>
+		</Panel>
+	</Panel>
+</root>

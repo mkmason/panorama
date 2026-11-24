@@ -1,0 +1,81 @@
+@use '../../config' as *;
+
+// CS:S "Quit game" dialog (layout/modals/popups/css-quit.xml): translucent warm-grey rounded box, bold caps title,
+// centred dim message, two outlined beveled buttons. Colours match the CS:S map selector / Options window.
+
+$css-text: #ecece3;
+$css-text-dim: #c2c2b5;
+$css-line-dark: rgba(0, 0, 0, 0.45);
+$css-line-light: rgba(255, 255, 255, 0.5);
+$css-engrave: 0px 1px 0px rgba(0, 0, 0, 0.4);
+
+.PopupPanel.css-quit {
+	flow-children: down;
+	width: 296px;
+	padding: 10px 16px 20px 16px;
+	border-radius: 5px;
+	background-color: rgba(125, 124, 121, 0.82);
+	box-shadow: 0 4px 24px 2px rgba(0, 0, 0, 0.6);
+}
+
+.css-quit {
+	&__title {
+		font-family: $font;
+		font-size: 11px;
+		font-weight: bold;
+		color: $white;
+		text-shadow: $css-engrave;
+	}
+
+	&__message {
+		width: 100%;
+		margin-top: 12px;
+		font-family: $font;
+		font-size: 13px;
+		color: $css-text-dim;
+		text-align: center;
+		horizontal-align: center;
+	}
+
+	&__buttons {
+		flow-children: right;
+		horizontal-align: center;
+		margin-top: 20px;
+	}
+
+	&__btn {
+		height: 25px;
+		padding: 0 6px;
+		margin: 0 9px;
+		background-color: rgba(0, 0, 0, 0.06);
+		border-top: 1px solid $css-line-light;
+		border-left: 1px solid $css-line-light;
+		border-right: 1px solid $css-line-dark;
+		border-bottom: 1px solid $css-line-dark;
+		transition: background-color 0.1s ease-in-out 0s;
+
+		&:hover {
+			background-color: rgba(255, 255, 255, 0.08);
+			sound: 'UIPanorama.ButtonRollover';
+		}
+
+		&:active {
+			border-top: 1px solid $css-line-dark;
+			border-left: 1px solid $css-line-dark;
+			border-right: 1px solid $css-line-light;
+			border-bottom: 1px solid $css-line-light;
+		}
+
+		&:focus {
+			background-color: rgba(255, 255, 255, 0.04);
+		}
+	}
+
+	&__btn-text {
+		font-family: $font;
+		font-size: 13px;
+		color: $white;
+		text-shadow: $css-engrave;
+		vertical-align: center;
+	}
+}

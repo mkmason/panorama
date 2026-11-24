@@ -14,6 +14,8 @@
 		</Panel>
 
 		<Label class="leaderboard-entry__item leaderboard-entry__time" text="{g:time:time}" />
+		<!-- Custom: date column, only shown in the Classic leaderboard style -->
+		<Label class="leaderboard-entry__item leaderboard-entry__achieved" text="{s:achieved}" />
 		<!-- TODO: Tags -->
 
 	</LeaderboardEntry>

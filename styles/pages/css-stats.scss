@@ -1,0 +1,927 @@
+@use '../config' as *;
+@use 'sass:map';
+
+// CS:S Stats window (layout/pages/stats/stats.xml #StatsCssRoot, filled by stats.ts renderCss*): same skin as the
+// CS:S map selector / Options window. Orange only marks the pressed row in the Maps tab and hovered dropdown items.
+
+$c-window: rgba(125, 124, 121);
+$c-panel: rgba(91, 90, 88);
+$c-field: rgba(20, 20, 16, 0.55);
+$c-control: rgba(76, 76, 74);
+$c-orange: #d9871f;
+$c-orange-text: #14120b;
+$c-text: #ecece3;
+$c-dim: #c2c2b5;
+$c-muted: #a9a89f;
+$c-dark: rgba(0, 0, 0, 0.45);
+$c-light: rgba(255, 255, 255, 0.24);
+$c-engrave: 0px 1px 0px rgba(0, 0, 0, 0.4);
+
+@mixin raised {
+	border-top: 1px solid $c-light;
+	border-left: 1px solid $c-light;
+	border-right: 1px solid $c-dark;
+	border-bottom: 1px solid $c-dark;
+	border-radius: 0;
+}
+
+@mixin sunken {
+	border-top: 1px solid $c-dark;
+	border-left: 1px solid $c-dark;
+	border-right: 1px solid $c-light;
+	border-bottom: 1px solid $c-light;
+	border-radius: 0;
+}
+
+@mixin text($size: 13px) {
+	font-family: $font;
+	font-size: $size;
+	font-weight: normal;
+	letter-spacing: 0px;
+	text-transform: none;
+	color: $c-text;
+	text-shadow: $c-engrave;
+}
+
+.cssstats.css-window {
+	max-width: 1300px;
+}
+
+.cssstats {
+	flow-children: down;
+	padding: 4px;
+	background-color: $c-window;
+	@include raised;
+	box-shadow: 0 4px 24px 2px rgba(0, 0, 0, 0.75);
+
+	&__titlebar {
+		flow-children: right;
+		width: 100%;
+		height: 30px;
+		padding: 0 4px 0 10px;
+		border-bottom: 1px solid $c-dark;
+	}
+
+	&__title {
+		@include text(16px);
+		width: fill-parent-flow(1);
+		font-weight: bold;
+		vertical-align: center;
+	}
+
+	&__close {
+		width: 24px;
+		height: 24px;
+		padding: 4px;
+		vertical-align: center;
+		border-radius: 2px;
+		transition: background-color 0.1s ease-in-out 0s;
+
+		&:hover {
+			background-color: $red;
+			sound: 'UIPanorama.ButtonRollover';
+		}
+	}
+
+	&__close-icon {
+		width: 100%;
+		height: 100%;
+		wash-color: $c-text;
+	}
+
+	// --- Top rows: player lookup, dropdowns ---
+	&__toprow {
+		flow-children: right;
+		width: 100%;
+		height: 30px;
+		margin-top: 6px;
+		padding: 0 6px;
+	}
+
+	&__label {
+		@include text(13px);
+		color: $c-dim;
+		vertical-align: center;
+		margin-right: 6px;
+
+		&--gap {
+			margin-left: 16px;
+		}
+	}
+
+	&__field {
+		width: 320px;
+		height: 24px;
+		vertical-align: center;
+		background-color: $c-field;
+		@include sunken;
+	}
+
+	&__entry {
+		@include text(13px);
+		text-shadow: none;
+		width: 100%;
+		height: 100%;
+		padding: 4px 6px 0px 6px;
+		background-color: none;
+		border: 0px;
+
+		#PlaceholderText {
+			@include text(13px);
+			color: #8f8f84;
+			text-shadow: none;
+		}
+
+		&:focus #PlaceholderText,
+		&.HasInput #PlaceholderText {
+			opacity: 0;
+		}
+	}
+
+	&__userstatus {
+		@include text(13px);
+		color: $c-dim;
+		vertical-align: center;
+		margin-left: 10px;
+	}
+
+	&__dropdown.dropdown {
+		width: 160px;
+		height: 24px;
+		vertical-align: center;
+		horizontal-align: left;
+		border-radius: 0;
+		background-color: $c-control;
+		@include sunken;
+		box-shadow: none;
+
+		&:hover,
+		&.DropDownMenuVisible {
+			background-color: rgba(86, 86, 84);
+		}
+
+		&:disabled {
+			background-color: $c-panel;
+		}
+
+		Label {
+			@include text(13px);
+			width: fill-parent-flow(1);
+			padding: 0 6px;
+			text-align: left;
+		}
+
+		.DropDownIcon {
+			width: 22px;
+			border: 0px;
+			border-radius: 0;
+			background-color: none;
+			background-size: 10px 10px;
+			box-shadow: none;
+			img-shadow: none;
+			wash-color: $c-text;
+		}
+
+		&--mode {
+			width: 200px;
+		}
+
+		&--filter {
+			width: 120px;
+		}
+	}
+
+	// --- Tabs ---
+	&__tabs {
+		flow-children: right;
+		width: 100%;
+		height: 34px;
+		margin-top: 6px;
+		padding: 0 4px;
+	}
+
+	&__tab {
+		height: 30px;
+		padding: 0 16px;
+		margin-right: 2px;
+		vertical-align: bottom;
+		background-color: $c-window;
+		border-top: 1px solid $c-light;
+		border-left: 1px solid $c-light;
+		border-right: 1px solid $c-dark;
+		transition: background-color 0.1s ease-in-out 0s;
+
+		&:hover {
+			sound: 'UIPanorama.ButtonRollover';
+		}
+
+		&:selected {
+			height: 32px;
+			background-color: $c-panel;
+		}
+	}
+
+	&__tab-label {
+		@include text(14px);
+		color: $c-dim;
+		vertical-align: center;
+
+		.cssstats__tab:selected & {
+			color: $white;
+			font-weight: bold;
+		}
+	}
+
+	// --- Body ---
+	&__body {
+		flow-children: down;
+		width: 100%;
+		height: fill-parent-flow(1);
+		padding: 8px;
+		background-color: $c-panel;
+		border-top: 1px solid $c-light;
+		border-bottom: 1px solid $c-dark;
+	}
+
+	&__status {
+		@include text(13px);
+		color: $c-dim;
+		margin: 4px;
+	}
+
+	&__overview {
+		flow-children: right;
+		width: 100%;
+		height: fill-parent-flow(1);
+	}
+
+	&__maps {
+		flow-children: down;
+		width: 100%;
+		height: fill-parent-flow(1);
+	}
+
+	// Etched group boxes (Overview)
+	&__group {
+		flow-children: down;
+		width: fill-parent-flow(1);
+		height: 100%;
+		margin-right: 8px;
+		padding: 8px 12px;
+		background-color: rgba(0, 0, 0, 0.08);
+		@include sunken;
+		overflow: squish scroll;
+	}
+
+	&__group-title {
+		@include text(16px);
+		font-weight: bold;
+		margin-bottom: 2px;
+	}
+
+	&__sub {
+		@include text(12px);
+		color: $c-dim;
+		margin-bottom: 10px;
+	}
+
+	&__subhead {
+		@include text(14px);
+		font-weight: bold;
+		margin: 14px 0 6px 0;
+		padding-top: 10px;
+		width: 100%;
+		border-top: 1px solid $c-dark;
+	}
+
+	&__kv {
+		flow-children: right;
+		width: 100%;
+		height: 22px;
+
+		&--dim .cssstats__kv-name,
+		&--dim .cssstats__kv-value {
+			color: $c-muted;
+		}
+	}
+
+	&__kv-name {
+		@include text(13px);
+		color: $c-dim;
+		width: fill-parent-flow(1);
+		vertical-align: center;
+	}
+
+	&__kv-value {
+		@include text(13px);
+		vertical-align: center;
+	}
+
+	// Grooved progress bar (no orange: light fill, like the CS:S slider groove)
+	&__bar {
+		height: 8px;
+		background-color: rgba(0, 0, 0, 0.35);
+		@include sunken;
+		vertical-align: center;
+
+		&--wide {
+			width: 100%;
+			margin: 2px 0 8px 0;
+		}
+
+		&--tier {
+			width: fill-parent-flow(1);
+			margin: 0 10px;
+		}
+	}
+
+	&__bar-fill {
+		height: 100%;
+		background-color: $c-dim;
+	}
+
+	&__rankbody {
+		flow-children: down;
+		width: 100%;
+	}
+
+	&__ladder {
+		flow-children: right;
+		width: 100%;
+		margin-bottom: 4px;
+	}
+
+	&__ladder-cell {
+		flow-children: down;
+		width: fill-parent-flow(1);
+		margin-right: 3px;
+		padding: 4px 0;
+		background-color: $c-field;
+		@include sunken;
+	}
+
+	&__ladder-name {
+		@include text(11px);
+		font-weight: bold;
+		horizontal-align: center;
+	}
+
+	&__ladder-count {
+		@include text(15px);
+		font-weight: bold;
+		horizontal-align: center;
+		margin-top: 1px;
+	}
+
+	&__note {
+		@include text(12px);
+		color: $c-dim;
+		margin: 4px 0;
+
+		&--warn {
+			color: #f3c98a;
+		}
+
+		&--pad {
+			margin: 8px;
+		}
+	}
+
+	// Tier rows (click to list the tier's maps)
+	&__tier {
+		flow-children: right;
+		width: 100%;
+		height: 26px;
+		padding: 0 6px;
+		transition: background-color 0.1s ease-in-out 0s;
+
+		&--odd {
+			background-color: rgba(0, 0, 0, 0.08);
+		}
+
+		&:hover {
+			background-color: rgba(255, 255, 255, 0.08);
+			sound: 'UIPanorama.ButtonRollover';
+		}
+
+		&:active {
+			background-color: $c-orange;
+
+			.cssstats__tier-name,
+			.cssstats__tier-count {
+				color: $c-orange-text;
+				text-shadow: none;
+			}
+		}
+	}
+
+	&__tier-name {
+		@include text(13px);
+		width: 56px;
+		vertical-align: center;
+	}
+
+	&__tier-count {
+		@include text(13px);
+		width: 110px;
+		text-align: right;
+		vertical-align: center;
+	}
+
+	// --- Maps tab ---
+	&__mapshead {
+		flow-children: right;
+		width: 100%;
+		height: 30px;
+		margin-bottom: 4px;
+	}
+
+	&__mapstitle {
+		@include text(16px);
+		font-weight: bold;
+		vertical-align: center;
+		margin-right: 10px;
+	}
+
+	&__mapscount {
+		@include text(13px);
+		color: $c-dim;
+		vertical-align: center;
+	}
+
+	&__cols {
+		flow-children: right;
+		width: 100%;
+		height: 24px;
+		padding: 0 6px;
+		background-color: $c-panel;
+		border-top: 1px solid $c-light;
+		border-bottom: 1px solid $c-dark;
+	}
+
+	&__col {
+		@include text(12px);
+		font-weight: bold;
+		color: $c-dim;
+		vertical-align: center;
+	}
+
+	&__list {
+		flow-children: down;
+		width: 100%;
+		height: fill-parent-flow(1);
+		overflow: squish scroll;
+		background-color: rgba(0, 0, 0, 0.06);
+		@include sunken;
+	}
+
+	&__row {
+		flow-children: right;
+		width: 100%;
+		height: 30px;
+		padding: 0 6px;
+
+		&--odd {
+			background-color: rgba(0, 0, 0, 0.1);
+		}
+
+		&:hover {
+			background-color: rgba(255, 255, 255, 0.06);
+		}
+
+		// The pressed row, like the CS:S map selector
+		&--selected,
+		&--selected:hover {
+			background-color: $c-orange;
+
+			.cssstats__cell {
+				color: $c-orange-text;
+				text-shadow: none;
+			}
+		}
+	}
+
+	&__cell {
+		@include text(13px);
+		vertical-align: center;
+
+		&--undone {
+			color: $c-dim;
+		}
+
+		&--done {
+			color: #e6c15a;
+			font-weight: bold;
+		}
+	}
+
+	// Shared column widths (header + rows)
+	&__cell--name {
+		width: fill-parent-flow(1);
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	&__cell--mode {
+		width: 120px;
+	}
+
+	&__cell--tier {
+		width: 44px;
+		text-align: right;
+	}
+
+	&__cell--done {
+		width: 52px;
+		text-align: center;
+	}
+
+	&__rankinfo {
+		flow-children: right;
+		width: 310px;
+		vertical-align: center;
+		margin-right: 10px;
+	}
+
+	&__cell--actions {
+		width: 150px;
+	}
+
+	&__actions {
+		flow-children: right;
+		height: 100%;
+	}
+
+	// --- Buttons ---
+	&__btn {
+		flow-children: right;
+		height: 26px;
+		padding: 0 16px;
+		margin-left: 6px;
+		vertical-align: center;
+		background-color: $c-window;
+		@include raised;
+		transition: background-color 0.1s ease-in-out 0s;
+
+		&:hover {
+			background-color: rgba(140, 139, 135);
+			sound: 'UIPanorama.ButtonRollover';
+		}
+
+		&:active {
+			@include sunken;
+		}
+
+		&--default .cssstats__btn-text {
+			font-weight: bold;
+		}
+
+		&--small {
+			height: 22px;
+			padding: 0 10px;
+		}
+
+		&--row {
+			height: 22px;
+			padding: 0 8px;
+			margin-left: 4px;
+		}
+
+		&--icon {
+			width: 30px;
+			padding: 0;
+		}
+	}
+
+	&__btn-text {
+		@include text(13px);
+		vertical-align: center;
+		horizontal-align: center;
+
+		.cssstats__btn--row & {
+			font-size: 12px;
+		}
+	}
+
+	&__btn-icon {
+		width: 14px;
+		height: 14px;
+		align: center center;
+		wash-color: $c-text;
+	}
+
+	// --- Bottom bar ---
+	&__bottom {
+		flow-children: right;
+		width: 100%;
+		height: 40px;
+		margin-top: 6px;
+		padding: 0 6px;
+	}
+
+	&__check {
+		flow-children: right;
+		vertical-align: center;
+		padding: 3px;
+
+		&:hover .cssstats__check-label {
+			color: $white;
+		}
+	}
+
+	&__check-box {
+		width: 16px;
+		height: 16px;
+		vertical-align: center;
+		margin-right: 7px;
+		background-color: $c-field;
+		@include sunken;
+	}
+
+	&__check-tick {
+		@include text(13px);
+		width: 100%;
+		height: 100%;
+		font-weight: bold;
+		text-align: center;
+		vertical-align: center;
+		opacity: 0;
+
+		.cssstats__check--on & {
+			opacity: 1;
+		}
+	}
+
+	&__check-label {
+		@include text(13px);
+		color: $c-dim;
+		vertical-align: center;
+	}
+}
+
+// Group ladder colours: the leaderboard group-pill text colours (styles/config.scss)
+$cssstats-grp-keys: (
+	'wr': 'WORLD_RECORD',
+	't10': 'TOP_10',
+	'g1': 'GROUP_1',
+	'g2': 'GROUP_2',
+	'g3': 'GROUP_3',
+	'g4': 'GROUP_4',
+	'g5': 'GROUP_5',
+	'g6': 'GROUP_6'
+);
+
+@each $cls, $key in $cssstats-grp-keys {
+	.cssstats__grp--#{$cls} {
+		color: map.get(map.get($colors-group-pill, $key), 'text');
+	}
+}
+
+// Open dropdown lists (menuclass): light grey, orange hovered item
+.cssstats__menu.cssstats__menu {
+	min-width: 160px;
+	padding: 0px;
+	border: 1px solid $c-dark;
+	border-radius: 0;
+	background-color: rgba(154, 154, 150);
+	box-shadow: 0 2px 8px 0 rgba(0, 0, 0, 0.5);
+
+	&.DropDownMenuVisible {
+		border-radius: 0;
+	}
+
+	Label {
+		@include text(13px);
+		text-shadow: none;
+		// No width: 100% here: the list sizes to its items, so a percentage width collapses every item to 0
+		padding: 3px 6px;
+		background-color: none;
+
+		&:hover {
+			background-color: $c-orange;
+		}
+	}
+}
+
+// ─── Stats top-10 leaderboard popup (#StatsLbPopup) ──────────────────────────
+// Normal look (moved out of the layout's inline styles, unchanged), then the CS:S skin under .statslb--css.
+
+.statslb {
+	width: 100%;
+	height: 100%;
+
+	&__backdrop {
+		width: 100%;
+		height: 100%;
+		background-color: rgba(0, 0, 0, 0.72);
+	}
+
+	&__card {
+		flow-children: down;
+		width: 1080px;
+		height: 92%;
+		horizontal-align: center;
+		vertical-align: center;
+		padding: 22px 24px;
+		background-color: #12161d;
+		border: 1px solid #2a3340;
+		border-radius: 10px;
+	}
+
+	&__cssbar {
+		visibility: collapse;
+	}
+
+	&__content {
+		flow-children: right;
+		width: 100%;
+		height: fill-parent-flow(1);
+	}
+
+	&__images {
+		flow-children: down;
+		width: 256px;
+		height: 100%;
+		margin-right: 20px;
+		overflow: squish scroll;
+	}
+
+	&__main {
+		flow-children: down;
+		width: fill-parent-flow(1);
+		height: 100%;
+		overflow: squish clip;
+	}
+
+	&__head {
+		flow-children: right;
+		width: 100%;
+		margin-bottom: 2px;
+	}
+
+	&__title {
+		width: fill-parent-flow(1);
+		font-size: 22px;
+		font-weight: bold;
+		color: #ffffff;
+		vertical-align: center;
+		text-overflow: ellipsis;
+	}
+
+	&__refresh {
+		height: 30px;
+		padding: 0 14px;
+		margin-right: 8px;
+		vertical-align: center;
+		background-color: #232a33;
+		border-radius: 6px;
+	}
+
+	&__refresh-text {
+		font-size: 13px;
+		color: #cdd5df;
+		vertical-align: center;
+	}
+
+	&__close {
+		width: 30px;
+		height: 30px;
+		vertical-align: center;
+		background-color: #232a33;
+		border-radius: 6px;
+	}
+
+	&__close-text {
+		font-size: 15px;
+		color: #cdd5df;
+		horizontal-align: center;
+		vertical-align: center;
+	}
+
+	&__subtitle {
+		font-size: 13px;
+		color: #8a93a0;
+		margin-bottom: 12px;
+	}
+
+	&__status {
+		font-size: 14px;
+		color: #8a93a0;
+		margin-bottom: 6px;
+	}
+
+	&__list {
+		flow-children: down;
+		width: 100%;
+		height: fill-parent-flow(1);
+		overflow: squish scroll;
+	}
+}
+
+// CS:S skin: beveled grey window with a title bar; the list sits in a sunken panel
+.statslb.statslb--css {
+	.statslb__backdrop {
+		background-color: rgba(0, 0, 0, 0.35);
+	}
+
+	.statslb__card {
+		width: 1000px;
+		height: 86%;
+		padding: 4px;
+		background-color: $c-window;
+		@include raised;
+		box-shadow: 0 4px 24px 2px rgba(0, 0, 0, 0.75);
+	}
+
+	.statslb__cssbar {
+		visibility: visible;
+		flow-children: right;
+		width: 100%;
+		height: 30px;
+		padding: 0 4px 0 10px;
+		border-bottom: 1px solid $c-dark;
+	}
+
+	.statslb__cssbar-title {
+		@include text(16px);
+		width: fill-parent-flow(1);
+		font-weight: bold;
+		vertical-align: center;
+	}
+
+	.statslb__cssbar-close {
+		width: 24px;
+		height: 24px;
+		padding: 4px;
+		vertical-align: center;
+		border-radius: 2px;
+
+		&:hover {
+			background-color: $red;
+			sound: 'UIPanorama.ButtonRollover';
+		}
+	}
+
+	.statslb__cssbar-close-icon {
+		width: 100%;
+		height: 100%;
+		wash-color: $c-text;
+	}
+
+	.statslb__content {
+		padding: 10px;
+	}
+
+	.statslb__images {
+		width: 250px;
+		margin-right: 10px;
+	}
+
+	.statslb__title {
+		@include text(18px);
+		font-weight: bold;
+	}
+
+	// The title bar has the X
+	.statslb__close {
+		visibility: collapse;
+	}
+
+	.statslb__refresh {
+		height: 24px;
+		padding: 0 14px;
+		margin-right: 0px;
+		background-color: $c-window;
+		@include raised;
+
+		&:hover {
+			background-color: rgba(140, 139, 135);
+			sound: 'UIPanorama.ButtonRollover';
+		}
+
+		&:active {
+			@include sunken;
+		}
+	}
+
+	.statslb__refresh-text {
+		@include text(13px);
+	}
+
+	.statslb__subtitle {
+		@include text(13px);
+		color: $c-dim;
+		margin-bottom: 8px;
+	}
+
+	.statslb__status {
+		@include text(13px);
+		color: $c-dim;
+	}
+
+	.statslb__list {
+		padding: 4px 0;
+		background-color: $c-panel;
+		@include sunken;
+	}
+}

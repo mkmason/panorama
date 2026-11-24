@@ -230,6 +230,97 @@
                     </Panel>
                     <Panel class="mapselector__leaderboards-container">
                         <Leaderboards id="Leaderboards" class="mapselector-leaderboards__list leaderboards--in-map-selector"/>
+
+                        <!-- Custom: map info for the Classic leaderboard style (Interface > Leaderboard Style), ported from
+                             this fork's pre-merge map selector: description / credits / submission status / changelog /
+                             date on the left, statistics with PB and WR on the right. Collapsed unless the row has
+                             leaderboards-classic-row; filled by MapSelectorHandler.updateClassicMapInfo. -->
+                        <Panel id="ClassicMapInfo" class="mapselector-classic-info">
+                            <Panel class="mapselector-map-info__description">
+                                <Panel class="mapselector-map-info__description-scroll">
+                                    <Panel id="ClassicMapDescriptionContainer" class="flow-down w-full">
+                                        <Label id="ClassicHeadingDescription" class="mapselector-map-info__h1" text="Description" />
+                                        <Label class="mapselector-map-info__paragraph" text="{s:classic_description}" />
+                                    </Panel>
+                                    <Panel id="ClassicMapCredits" class="mapselector-credits">
+                                        <!-- Populated by JS -->
+                                    </Panel>
+                                    <Panel id="ClassicMapStatus" class="mapselector-map-info__status">
+                                        <Label id="ClassicHeadingStatus" class="mapselector-map-info__h1" text="Submission Status" />
+                                        <Panel class="flow-right w-full">
+                                            <Label class="mapselector-map-info__text mr-1" text="{s:classic_status}" />
+                                            <TooltipPanel tooltip="{s:classic_status_tooltip}" class="v-align-center">
+                                                <Image class="mapselector-map-info__status-icon" src="file://{images}/info.svg" textureheight="32" />
+                                            </TooltipPanel>
+                                        </Panel>
+                                    </Panel>
+                                    <Panel id="ClassicMapChangelog" class="mapselector-map-info__changelog mt-4">
+                                        <Label id="ClassicHeadingChangelog" class="mapselector-map-info__h1" text="Changelog" />
+                                        <Panel id="ClassicMapChangelogList" class="flow-down w-full">
+                                            <!-- Populated by JS -->
+                                        </Panel>
+                                    </Panel>
+                                    <Panel id="ClassicMapDates" class="flow-down mt-4">
+                                        <Label id="ClassicHeadingDate" class="mapselector-map-info__h1" text="Date Created" />
+                                        <Label class="mapselector-map-info__paragraph" text="{s:classic_date}" />
+                                    </Panel>
+                                </Panel>
+                            </Panel>
+
+                            <Panel id="ClassicMapStats" class="mapselector-stats">
+                                <Label id="ClassicHeadingStats" class="mapselector-map-info__h1" text="Statistics" />
+                                <Panel class="mapselector-stats__container">
+                                    <Panel class="mapselector-stats__column">
+                                <TooltipPanel id="ClassicStatFavorites" class="mapselector-stat" tooltip="{s:classic_tip_favorites}">
+                                    <Image class="mapselector-stat__icon" src="file://{images}/star.svg" textureheight="48" />
+                                    <Panel class="h-full v-align-center">
+                                        <Label class="mapselector-stat__text" text="{d:classic_favorites}" />
+                                        <Image class="mapselector-stat__spinner spin-clockwise" src="file://{images}/refresh.svg" textureheight="32" />
+                                    </Panel>
+                                </TooltipPanel>
+                                <TooltipPanel id="ClassicStatUnique" class="mapselector-stat" tooltip="{s:classic_tip_unique}">
+                                    <Image class="mapselector-stat__icon" src="file://{images}/flag.svg" textureheight="48" />
+                                    <Panel class="h-full v-align-center">
+                                        <Label class="mapselector-stat__text" text="{d:classic_unique_completions}" />
+                                        <Image class="mapselector-stat__spinner spin-clockwise" src="file://{images}/refresh.svg" textureheight="32" />
+                                    </Panel>
+                                </TooltipPanel>
+                                <TooltipPanel id="ClassicStatPB" class="mapselector-stat" tooltip="{s:classic_tip_pb}">
+                                    <Image class="mapselector-stat__icon" src="file://{images}/ranks/pb.svg" textureheight="48" />
+                                    <Panel class="h-full v-align-center">
+                                        <Label id="ClassicMapPB" class="mapselector-stat__text" text="{g:time:3:classic_personal_best}" />
+                                        <Label id="ClassicMapNoPB" class="mapselector-stat__text" text="N/A" />
+                                        <Image class="mapselector-stat__spinner spin-clockwise" src="file://{images}/refresh.svg" textureheight="32" />
+                                    </Panel>
+                                </TooltipPanel>
+                                    </Panel>
+                                    <Panel class="mapselector-stats__column mapselector-stats__column--right">
+                                <TooltipPanel id="ClassicStatTotal" class="mapselector-stat" tooltip="{s:classic_tip_total}">
+                                    <Image class="mapselector-stat__icon" src="file://{images}/flag-checkered.svg" textureheight="48" />
+                                    <Panel class="h-full v-align-center">
+                                        <Label class="mapselector-stat__text" text="{d:classic_total_completions}" />
+                                        <Image class="mapselector-stat__spinner spin-clockwise" src="file://{images}/refresh.svg" textureheight="32" />
+                                    </Panel>
+                                </TooltipPanel>
+                                <TooltipPanel id="ClassicStatRate" class="mapselector-stat" tooltip="{s:classic_tip_rate}">
+                                    <Image class="mapselector-stat__icon" src="file://{images}/percent.svg" textureheight="48" />
+                                    <Panel class="h-full v-align-center">
+                                        <Label class="mapselector-stat__text" text="{s:classic_completion_rate}" />
+                                        <Image class="mapselector-stat__spinner spin-clockwise" src="file://{images}/refresh.svg" textureheight="32" />
+                                    </Panel>
+                                </TooltipPanel>
+                                <TooltipPanel id="ClassicStatWR" class="mapselector-stat" tooltip="{s:classic_tip_wr}">
+                                    <Image class="mapselector-stat__icon" src="file://{images}/ranks/wr.svg" textureheight="48" />
+                                    <Panel class="h-full v-align-center">
+                                        <Label id="ClassicMapWR" class="mapselector-stat__text" text="{g:time:3:classic_world_record}" />
+                                        <Label id="ClassicMapNoWR" class="mapselector-stat__text" text="N/A" />
+                                        <Image class="mapselector-stat__spinner spin-clockwise" src="file://{images}/refresh.svg" textureheight="32" />
+                                    </Panel>
+                                </TooltipPanel>
+                                    </Panel>
+                                </Panel>
+                            </Panel>
+                        </Panel>
                     </Panel>
                 </Panel>
                 <Panel class="mapselector__right-bottom">

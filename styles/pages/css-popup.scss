@@ -1,0 +1,30 @@
+// CS:S menu pages as popup windows (map selector, lobby list, Options): the page fills the screen with a transparent
+// backdrop button (closes the page, like the window's X) and the window floats centred on top, so the CS:S menu
+// stays visible around it. MainMenuHandler.showMainMenuPageContent keeps the menu shown for these pages.
+
+.cssmaps-page,
+.csslobbies-page,
+.cssopts-page,
+.cssstats-page {
+	flow-children: none;
+	padding: 0px;
+	max-width: none;
+}
+
+.css-window-backdrop {
+	width: 100%;
+	height: 100%;
+	background-color: rgba(0, 0, 0, 0.15);
+}
+
+// Doubled class beats each window's own full-height sizing
+.css-window.css-window {
+	width: 90%;
+	height: 86%;
+	horizontal-align: center;
+	vertical-align: center;
+}
+
+.csslobbies.css-window.css-window {
+	height: 78%;
+}

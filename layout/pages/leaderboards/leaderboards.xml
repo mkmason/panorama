@@ -8,6 +8,51 @@
 	</scripts>
 
 	<Leaderboards class="leaderboards leaderboards__list" acceptsinput="true" acceptsfocus="true" hittest="true" hittestchildren="true">
+        <!-- Custom: Classic style (Interface > Leaderboard Style). The fork's pre-merge 0.10 leaderboard header: main tabs,
+             online sub-tabs and a column header. Collapsed in the new style; LeaderboardsHandler maps the tabs onto the
+             paginated records filters. Radio groups are set in code (per-instance, like the new-style tabs). -->
+        <Panel id="ClassicFilters" class="leaderboard-classic-filters">
+            <Panel class="tabs">
+                <RadioButton id="ClassicGlobal" class="tabs__tab" onactivate="LeaderboardsHandler.setClassicTab('global')">
+                    <Label class="tabs__text" text="#Leaderboards_Category_Global" />
+                </RadioButton>
+                <RadioButton id="ClassicLocal" class="tabs__tab" onactivate="LeaderboardsHandler.setClassicTab('local')">
+                    <Label class="tabs__text" text="Local" />
+                </RadioButton>
+                <RadioButton id="ClassicLobby" class="tabs__tab" onactivate="LeaderboardsHandler.setClassicTab('lobby')">
+                    <Label class="tabs__text" text="#Leaderboards_Category_Lobby" />
+                </RadioButton>
+            </Panel>
+            <Panel id="ClassicSubtypes" class="tabs leaderboard-classic-filters__subtypes">
+                <RadioButton id="ClassicTop10" class="tabs__tab" onactivate="LeaderboardsHandler.setClassicSubtype('top10')">
+                    <Label class="tabs__text" text="Top 10" />
+                </RadioButton>
+                <RadioButton id="ClassicAround" class="tabs__tab" onactivate="LeaderboardsHandler.setClassicSubtype('around')">
+                    <Label class="tabs__text" text="Around" />
+                </RadioButton>
+                <RadioButton id="ClassicFriends" class="tabs__tab" onactivate="LeaderboardsHandler.setClassicSubtype('friends')">
+                    <Label class="tabs__text" text="#Leaderboards_Category_Friends" />
+                </RadioButton>
+            </Panel>
+            <Panel class="leaderboard-classic-filters__spacer" />
+            <!-- The map selector / tab menu StyleSelector is moved in here while Classic is on (attachStyleSelector) -->
+            <Panel id="ClassicStyleSlot" class="leaderboard-classic-filters__style-slot" />
+            <!-- Mirrors the TrackSelector's tracks; picking one selects that track's row there (setClassicTracks) -->
+            <DropDown id="ClassicTrackDropdown" class="dropdown leaderboard-classic-filters__track" menuclass="dropdown-menu">
+                <!-- Options populated via code -->
+            </DropDown>
+            <TooltipPanel id="ClassicSyncTooltip" class="leaderboard-classic-filters__sync" tooltip="Switch to this track and style">
+                <Button id="ClassicSyncButton" class="button leaderboard-classic-filters__sync-button" onactivate="LeaderboardsHandler.syncTrackAndStyle()">
+                    <Image class="button__icon" src="file://{images}/swap-horizontal-bold.svg" textureheight="32" />
+                </Button>
+            </TooltipPanel>
+        </Panel>
+        <Panel id="ClassicHeader" class="leaderboard-classic-header">
+            <Label class="leaderboard-classic-header__item leaderboard-classic-header__rank" text="Rank" />
+            <Label class="leaderboard-classic-header__item leaderboard-classic-header__player" text="Player" />
+            <Label class="leaderboard-classic-header__item leaderboard-classic-header__time" text="Time" />
+            <Label class="leaderboard-classic-header__item leaderboard-classic-header__date" text="Date Achieved" />
+        </Panel>
         <Panel class="leaderboard-radio">
             <RadioButton id="TimesListGlobal" class="leaderboard-radio__radio-button" onactivate="LeaderboardsHandler.setFilter(LeaderboardRecordsFilter.GLOBAL)">
                 <Label class="leaderboard-radio__radio-button__label" text="#Leaderboards_Category_Global" />

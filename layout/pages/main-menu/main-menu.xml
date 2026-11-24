@@ -194,10 +194,10 @@
 									<Button class="cssmenu__item" onactivate="MainMenuHandler.navigateToPage('CssLobbyList', 'lobby-list/css-lobby-list', false)">
 										<Label class="cssmenu__item-text" text="FIND LOBBIES" />
 									</Button>
-									<Button class="cssmenu__item" onactivate="MainMenuHandler.navigateToPage('Settings', 'settings/settings')">
+									<Button class="cssmenu__item" onactivate="MainMenuHandler.navigateToPage('CssSettings', 'settings/css-settings', false)">
 										<Label class="cssmenu__item-text" text="OPTIONS" />
 									</Button>
-									<Button class="cssmenu__item" onactivate="MainMenuHandler.navigateToPage('Stats', 'stats/stats')">
+									<Button class="cssmenu__item" onactivate="MainMenuHandler.navigateToPage('Stats', 'stats/stats', false)">
 										<Label class="cssmenu__item-text" text="STATS" />
 									</Button>
 									<Button class="cssmenu__item" onactivate="MainMenuHandler.openBackgroundSelector()">
@@ -278,6 +278,13 @@
 			     fall through to the full-screen backdrop button behind it (which closes the popup). Only a
 			     click that misses the window entirely reaches the backdrop. Same trick as the gallery. -->
 			<Panel class="bgselector__window" hittest="true" onactivate="">
+				<!-- CS:S menu only: window title bar with a close button (styles/pages/main-menu.scss, CS:S menu section) -->
+				<Panel class="bgselector__cssbar">
+					<Label class="bgselector__cssbar-title" text="Background" />
+					<Button class="bgselector__cssbar-close" onactivate="MainMenuHandler.closeBackgroundSelector()">
+						<Image class="bgselector__cssbar-close-icon" src="file://{images}/close.svg" textureheight="24" />
+					</Button>
+				</Panel>
 				<Label class="bgselector__title" text="Choose Background" />
 				<Label class="bgselector__hint" text="Type a file name (with extension) from videos/backgrounds or images/backgrounds — e.g. MomentumDark.webm or background01.dds." />
 				<Panel class="bgselector__inputrow">

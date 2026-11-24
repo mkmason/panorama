@@ -147,6 +147,12 @@
 					<Label text="#Settings_Menu_Type1" value="1" id="bgtype1" />
 				</SettingsEnumDropDown>
 
+				<!-- Custom: switch the map selector / tab menu leaderboards back to the look from before upstream's Nov 2026 restyle -->
+				<SettingsEnum text="Leaderboard Style" psvar="settings.leaderboardStyle" infomessage="Classic restores the leaderboard look from before the November 2026 restyle: flat boxed rows and full-width tabs. Both styles load the same leaderboard data." tags="leaderboard,leaderboards,style,classic,old">
+					<RadioButton group="leaderboardstyle" text="New" value="0" activateoverride="$.DispatchEvent('LeaderboardsStyleChanged');" />
+					<RadioButton group="leaderboardstyle" text="Classic" value="1" activateoverride="$.DispatchEvent('LeaderboardsStyleChanged');" />
+				</SettingsEnum>
+
 				<Panel class="settings-group__combo">
 					<Button class="h-align-center button my-2" onactivate="UiToolkitAPI.ShowCustomLayoutPopup('', 'file://{resources}/layout/modals/popups/dont-show-again-settings.xml')">
 						<Label class="button__text" text="#Settings_Dosa_Title" />

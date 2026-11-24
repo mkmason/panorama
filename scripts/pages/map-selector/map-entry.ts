@@ -6,13 +6,59 @@ import { GamemodeInfo } from 'common/gamemode';
 import { getUserMapDataTrack } from 'common/leaderboard';
 import { getTier, handlePlayMap } from 'common/maps';
 import { Role } from 'common/web/enums/role.enum';
+import { TrackType } from 'common/web/enums/track-type.enum';
+import { CompletionGroup } from 'common/web/enums/completion-group.enum';
+import { getCompletionGroup, getRankGroupEnds } from 'common/web/consts/rank-groups.const';
 
 const NEW_MAP_BANNER_CUTOFF = 1000 * 60 * 60 * 24 * 5; // 5 days
+
+// Per-map "rank/total" items written by the stats page (stats.ts writeMapGroupIndex), keyed `mapID|gm|style`
+const MAP_GROUP_PREFIX = 'stats.mapGroup.';
+
+const GROUP_ICONS = new Map<CompletionGroup, string>([
+	[CompletionGroup.WORLD_RECORD, 'file://{images}/ranks/wr.svg'],
+	[CompletionGroup.TOP_10, 'file://{images}/ranks/top10.svg'],
+	[CompletionGroup.GROUP_1, 'file://{images}/ranks/g1.svg'],
+	[CompletionGroup.GROUP_2, 'file://{images}/ranks/g2.svg'],
+	[CompletionGroup.GROUP_3, 'file://{images}/ranks/g3.svg'],
+	[CompletionGroup.GROUP_4, 'file://{images}/ranks/g4.svg'],
+	[CompletionGroup.GROUP_5, 'file://{images}/ranks/g5.svg'],
+	[CompletionGroup.GROUP_6, 'file://{images}/ranks/g6.svg']
+]);
+const COMPLETED_ICON = 'file://{images}/flag.svg';
+
+/**
+ * The local player's main-track [rank, total completions] on a map, or null if unknown. Prefers the game's
+ * completions cache (fresh, but only filled for maps whose completions were fetched, e.g. by selecting them), then
+ * the stats page's rank scan, which covers every completed map once the stats page has scanned.
+ */
+function getMainTrackPlacement(mapID: number, gamemode: Gamemode, style: number): [number, number] | null {
+	try {
+		const main = MapCacheAPI.GetCompletions(mapID, gamemode, style)?.tracks?.find(
+			(track) => track.trackType === TrackType.MAIN
+		);
+		if (main?.rank != null && main.totalCompletions) return [main.rank, main.totalCompletions];
+	} catch {
+		// Fall through to the stats cache
+	}
+
+	const stored = $.persistentStorage.getItem<string>(`${MAP_GROUP_PREFIX}${mapID}|${gamemode}|${style}`);
+	const [rank, total] = (stored ?? '').split('/').map(Number);
+	return rank > 0 && total > 0 ? [rank, total] : null;
+}
 
 @PanelHandler()
 class MapEntryHandler {
 	constructor() {
 		$.RegisterEventHandler('MapEntry_MapDataUpdate', $.GetContextPanel(), () => this.update());
+		// A fetch of this map's completions (selecting it, a new PB) brings a fresh rank -> refresh the group icon
+		$.RegisterForUnhandledEvent('MapCache_CompletionsUpdate', (completions) => {
+			if (completions?.mapID === this.panels.cp?.mapData?.staticData?.id) this.update();
+		});
+		// The stats page saved new ranks (e.g. its startup preload finished after these rows were built)
+		$.RegisterForUnhandledEvent('Stats_MapGroupsUpdated', () => {
+			if (this.panels.cp?.IsValid() && this.panels.cp.mapData) this.update();
+		});
 		$.RegisterEventHandler('MapEntry_MapLobbiesUpdated', $.GetContextPanel(), (playerCount: number) =>
 			this.updatePlayerCount(playerCount)
 		);
@@ -143,12 +189,17 @@ class MapEntryHandler {
 
 		if (userData && userTrackData && userTrackData.time > 0) {
 			cp.SetDialogVariableFloat('time', userTrackData.time);
-			// Current system doesn't know user ranks
-			const icon = /* track.pr.rank <= 10 ? 'file://{images}/ranks/top10.svg' : */ 'file://{images}/flag.svg';
-			this.panels.pbIcon.SetImage(icon);
+			// Group placement (WR / Top 10 / G1-G6, same groups as the leaderboards) when the rank is known,
+			// otherwise the plain completed flag
+			const style = GameModeAPI.GetDefaultLeaderboardRunStyle(gamemode);
+			const placement = getMainTrackPlacement(staticData.id, gamemode, style);
+			const group = placement ? getCompletionGroup(placement[0], getRankGroupEnds(placement[1])) : null;
+			this.panels.pbIcon.SetImage((group != null && GROUP_ICONS.get(group)) || COMPLETED_ICON);
+			this.setGroupClass(group);
 			this.panels.pbLabel.SetTextWithDialogVariables('{g:time:time}'); // BUG: This is already set in the XML, but for some reason this is needed for the time to always display
 
 			let tooltip = `<b>${$.Localize('#Common_PersonalBest')}</b>: {g:time:time}`;
+			if (placement) tooltip += `<br><b>Rank</b>: ${placement[0]} / ${placement[1]}`;
 			if (userData.lastPlayed > 0) {
 				// Derived from C time() function (unix time in seconds, JS is in milliseconds), so * 1000
 				const lastPlayed = new Date(userData.lastPlayed * 1000).toLocaleDateString();
@@ -161,6 +212,7 @@ class MapEntryHandler {
 		} else {
 			this.panels.pbLabel.text = '';
 			this.panels.pbIcon.SetImage('');
+			this.setGroupClass(null);
 			this.panels.pbPanel.ClearPanelEvent('onmouseover');
 		}
 
@@ -180,6 +232,14 @@ class MapEntryHandler {
 		} else {
 			cp.SetHasClass('map-entry--private', false);
 			cp.SetHasClass('map-entry--new', false);
+		}
+	}
+
+	/** Colour the PB icon + time with the group's leaderboard pill colour (map-entry__pb--group-<NAME>). */
+	private setGroupClass(group: CompletionGroup | null) {
+		for (const [value, name] of Object.entries(CompletionGroup)) {
+			if (typeof name !== 'string') continue;
+			this.panels.pbPanel.SetHasClass(`map-entry__pb--group-${name}`, group != null && Number(value) === group);
 		}
 	}
 

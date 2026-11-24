@@ -22,6 +22,12 @@
 declare interface GlobalEventNameMap {
 	ReloadMainMenuBackground: () => void;
 
+	/** Fired by the Interface settings page when the Leaderboard Style setting changes (settings.leaderboardStyle) */
+	LeaderboardsStyleChanged: () => void;
+
+	/** Fired by the stats page after it updates the per-map rank/total items the map list's group icons read */
+	Stats_MapGroupsUpdated: () => void;
+
 	/**
 	 * Alert main menu tabs when they are shown, in case there is a data update needed.
 	 * `null` is used to indicate the main menu itself being show (e.g. you click the big Momentum logo), and
@@ -36,6 +42,13 @@ declare interface GlobalEventNameMap {
 	 *  pages (e.g. the CS:S map selector) that have their own script context and so can't call
 	 *  MainMenuHandler directly. */
 	MainMenu_ClosePage: () => void;
+
+	/** Asks the main menu to load the main map selector page (hidden) if it isn't yet; answered by
+	 *  MainMenu_MapSelectorReady once its C++ panel can handle play/download requests. */
+	MainMenu_PreloadMapSelector: () => void;
+
+	/** The main map selector page is loaded, so MapSelector_TryPlayMap / _DownloadMap are handled. */
+	MainMenu_MapSelectorReady: () => void;
 
 	/** Navigates to a setting by panel handle */
 	SettingsNavigateToPanel: (tabID: keyof typeof import('common/settings').SettingsTabs, panel: GenericPanel) => void;
@@ -82,9 +95,13 @@ declare interface GlobalEventNameMap {
 }
 
 $.DefineEvent('ReloadMainMenuBackground', 0);
+$.DefineEvent('LeaderboardsStyleChanged', 0);
+$.DefineEvent('Stats_MapGroupsUpdated', 0);
 $.DefineEvent('MainMenuPageShown', 1);
 $.DefineEvent('MainMenuPageHidden', 1);
 $.DefineEvent('MainMenu_ClosePage', 0);
+$.DefineEvent('MainMenu_PreloadMapSelector', 0);
+$.DefineEvent('MainMenu_MapSelectorReady', 0);
 $.DefineEvent('SettingsNavigateToPanel', 2);
 $.DefineEvent('SettingsSave', 0);
 $.DefineEvent('ExtendDrawer', 0);
