@@ -1,0 +1,24 @@
+<root>
+	<styles>
+		<include src="file://{resources}/styles/main.scss" />
+	</styles>
+
+	<scripts>
+		<include type="module" src="file://{scripts}/hud/cat.ts" />
+	</scripts>
+
+	<!--
+		Cat HUD element: a cataas.com cat (still image or animated GIF) shown on a timer. Pure-Panorama, same Frame
+		pattern as Jokes / Affirmations: the topmost panel has NO id (loader rule) and fills the frame so the customizer
+		can position the #CatHud child anywhere on screen.
+	-->
+	<Panel class="cathud-root" hittest="false" hittestchildren="false">
+		<Panel id="CatHud" class="cathud" enabled="false">
+			<!-- Host for the GIF frame-count probes (common/cataas.ts probeGifFrames). First, so the cat view covers it -->
+			<Panel id="CatHudProbeHost" class="cathud__probehost" />
+			<!-- The current cat (an Image, or a GIF player); a new one is added on top and the old one removed once it loads -->
+			<Panel id="CatHudView" class="cathud__view" />
+			<Label id="CatHudStatus" class="cathud__status" text="" />
+		</Panel>
+	</Panel>
+</root>

@@ -48,8 +48,8 @@
 		<Frame class="jokes-frame" src="file://{resources}/layout/hud/jokes.xml" hittest="false" hittestchildren="false" />
 		<!-- Advice: pure-Panorama HUD element that fetches adviceslip.com on a timer (no C++ type) -->
 		<Frame class="advice-frame" src="file://{resources}/layout/hud/advice.xml" hittest="false" hittestchildren="false" />
-		<!-- Zone Debug: research harness (2D zone minimap + collision/geometry probes). Toggle mom_zone_experimental_appearance. -->
-		<Frame class="zonedebug-frame" src="file://{resources}/layout/hud/zone-debug.xml" hittest="false" hittestchildren="false" />
+		<!-- Cat: pure-Panorama HUD element showing a cataas.com cat (still or animated GIF) on a timer (no C++ type) -->
+		<Frame class="cathud-frame" src="file://{resources}/layout/hud/cat.xml" hittest="false" hittestchildren="false" />
         <HudComparisons id="Comparisons" />
         <MomHudSpeedometer id="Speedometer" />
         <MomHudKeypress id="KeyPress"/>

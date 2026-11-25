@@ -1,6 +1,16 @@
 import { OnPanelLoad, PanelHandler } from 'util/module-helpers';
 import AuthenicationResult = MomentumAPI.AuthenicationResult;
 import { Role } from 'common/web/enums/role.enum';
+import {
+	CATAAS,
+	CAT_STATIC_TYPE,
+	CatInfo,
+	GifMethod,
+	GIF_MAX_STRIP,
+	catImageUrl,
+	createGifPlayer,
+	probeGifFrames
+} from 'common/cataas';
 
 /** CS:S menu pages shown as popup windows over the menu (each has a backdrop that closes it). */
 const CSS_POPUP_PAGES = new Set<string>(['CssMapSelector', 'CssLobbyList', 'CssSettings', 'Stats']);
@@ -47,33 +57,19 @@ const NEKOS_BEST_API = 'https://nekos.best/api/v2';
 const NEKO_CATEGORIES = ['neko', 'waifu', 'husbando', 'kitsune'];
 const NEKO_RESULT_COUNT = 15; // results per search / browse (API max is 20)
 
-// cataas.com cat-image API (https://cataas.com/doc.html) — the background selector's second online source. No auth;
-// JSON from /api/*, images from /cat/{id}[/says/{text}] with optional ?format= (png/jpeg) and ?filter= / ?blur=.
-// The JSON calls need `cataas.com` in domain_whitelist.kv3; image display via SetImage isn't whitelist-gated.
-// Panorama's Image can't decode GIF/WebP/AVIF from a URL. Asking cataas for a GIF as ?format=png returns ONE image
-// with every frame stacked vertically (W x H*frames), and there is no single-frame option. Shown as-is that draws as
-// slices and a full-size strip (e.g. 350x15840) crashes the game. So:
-//  - "Still" cats are only the ones that are JPEG/PNG to begin with.
-//  - "Animated GIF" cats are requested as such a strip at a SMALL, explicit frame size (?width&height, so every frame
-//    is exactly that size) with the total strip height capped at GIF_MAX_STRIP, then played back by showing one
-//    frame at a time: either by stepping the strip inside a clipping panel, or with Panorama's AnimatedImageStrip.
-//    The frame count comes from a tiny probe: the same GIF at 10x10 per frame is 10 x 10*frames.
-const CATAAS = 'https://cataas.com';
+// cataas.com cats for the background selector: still JPEG/PNG cats, or animated GIFs played from a frame strip.
+// The API helpers, the GIF strip player and why GIFs need it are in common/cataas.ts.
 const CAT_RESULT_COUNT = 15;
-const CAT_STATIC_TYPE = /^image\/(jpeg|png)$/;
 type CatKind = 'still' | 'gif';
 const CAT_KINDS: [CatKind, string][] = [
 	['still', 'Still (JPEG/PNG)'],
 	['gif', 'Animated GIF (experimental)']
 ];
-type GifMethod = 'step' | 'strip';
 const GIF_METHODS: [GifMethod, string][] = [
 	['step', 'Stepped strip'],
 	['strip', 'AnimatedImageStrip']
 ];
 const GIF_RESULT_COUNT = 8;
-const GIF_MAX_STRIP = 8192; // px: cap on a whole frame strip's height (the crash was a ~16k px tall strip)
-const GIF_FRAME_TIME = 0.08; // s per frame (GIF frame delays aren't available, so a fixed ~12 fps)
 // Timing logs for the cat GIF loading (console, prefix [CatGif +ms]): API call, each frame-count probe and each
 // strip image load, measured from when Load cats was pressed. Set to false to silence them.
 const CAT_GIF_DEBUG = false;
@@ -92,10 +88,6 @@ const CAT_FILTERS: [string, string][] = [
 	['negate', 'Negate'],
 	['blur', 'Blur']
 ];
-interface CatInfo {
-	id: string;
-	mimetype: string;
-}
 
 @PanelHandler()
 class MainMenuHandler implements OnPanelLoad {
@@ -819,19 +811,8 @@ class MainMenuHandler implements OnPanelLoad {
 	/** Image URL for a cat with the current caption / format / filter options. `width` (and `height`, which fixes
 	 *  every frame's size) shrink it; `format` overrides the chosen format (GIF strips are always PNG). */
 	catImageUrl(id: string, width?: number, height?: number, format = this.catFormat): string {
-		const says = ($<TextEntry>('#CatSaysInput')?.text ?? '').trim();
-		let url = `${CATAAS}/cat/${encodeURIComponent(id)}`;
-		const params: string[] = [];
-		if (says) {
-			url += `/says/${encodeURIComponent(says)}`;
-			params.push('fontSize=50', 'fontColor=white');
-		}
-		if (format) params.push(`format=${format}`);
-		if (this.catFilter === 'blur') params.push('blur=6');
-		else if (this.catFilter) params.push(`filter=${this.catFilter}`);
-		if (width) params.push(`width=${width}`);
-		if (height) params.push(`height=${height}`);
-		return params.length > 0 ? `${url}?${params.join('&')}` : url;
+		const says = $<TextEntry>('#CatSaysInput')?.text ?? '';
+		return catImageUrl(id, { says, format, filter: this.catFilter, width, height });
 	}
 
 	/** Fetch a random batch of cats of the chosen type and render them as test thumbnails. */
@@ -975,52 +956,14 @@ class MainMenuHandler implements OnPanelLoad {
 		}
 	}
 
-	/** Frame count of a GIF cat: loads it as a strip of 10x10 frames (10 x 10*frames) and reads the image's size. */
+	/** Frame count of a GIF cat (common/cataas.ts probeGifFrames), probed under the selector's hidden #CatProbeHost. */
 	probeGifFrames(id: string, name = id): Promise<number> {
-		return new Promise((resolve, reject) => {
-			const host = $('#CatProbeHost');
-			if (!host) {
-				reject('no probe host');
-				return;
-			}
-			const probe = $.CreatePanel('Image', host, '', { class: 'bgselector__catprobe' });
-			let done = false;
-			const start = Date.now();
-			const finish = (frames: number | null, why = '') => {
-				if (done) return;
-				done = true;
-				this.catLog(
-					`${name} probe: ${frames ? `${frames} frames` : `FAILED (${why})`} after ${Date.now() - start}ms`
-				);
-				if (probe.IsValid()) probe.DeleteAsync(0);
-				if (frames) resolve(frames);
-				else reject(why);
-			};
-			const read = (tries: number) => {
-				if (done) return;
-				if (!probe.IsValid()) return finish(null, 'probe removed');
-				// Layout size of an unsized Image is its texture size; content size as a fallback
-				const w = probe.actuallayoutwidth || probe.contentwidth;
-				const h = probe.actuallayoutheight || probe.contentheight;
-				if (w > 0 && h > 0) return finish(Math.max(1, Math.round(h / w)));
-				if (tries <= 0) return finish(null, 'timed out');
-				$.Schedule(0.1, () => read(tries - 1));
-			};
-			$.RegisterEventHandler('ImageFailedLoad', probe, () => finish(null, 'image failed to load'));
-			$.RegisterEventHandler('PanelLoaded', probe, () =>
-				this.catLog(`${name} probe: PanelLoaded after ${Date.now() - start}ms`)
-			);
-			this.catLog(`${name} probe: requested`);
-			probe.SetImage(`${CATAAS}/cat/${encodeURIComponent(id)}?format=png&width=10&height=10`);
-			read(150); // up to ~15 s
-		});
+		const host = $('#CatProbeHost');
+		if (!host) return Promise.reject('no probe host');
+		return probeGifFrames(host, id, 'bgselector__catprobe', (msg) => this.catLog(`${name} ${msg}`));
 	}
 
-	/**
-	 * Play a vertical frame strip (`frames` frames of equal size, stacked top to bottom) inside `parent`, filling it.
-	 *  - 'step': a clipping panel holding the whole strip as an Image, moved up one frame height every GIF_FRAME_TIME.
-	 *  - 'strip': Panorama's AnimatedImageStrip (built for horizontal strips of square frames; vertical is a test).
-	 */
+	/** Play a GIF frame strip filling `parent` (common/cataas.ts createGifPlayer), with CAT_GIF_DEBUG timing logs. */
 	createGifPlayer(
 		parent: GenericPanel,
 		url: string,
@@ -1029,53 +972,10 @@ class MainMenuHandler implements OnPanelLoad {
 		onFail?: (why: string) => void,
 		logName?: string
 	): GenericPanel {
-		// CAT_GIF_DEBUG: time from requesting the strip to Panorama reporting it loaded (or failed)
-		const start = Date.now();
-		const watch = (panel: GenericPanel) => {
-			if (!logName) return;
-			this.catLog(`${logName}: strip requested (${method})`);
-			$.RegisterEventHandler('PanelLoaded', panel, () =>
-				this.catLog(`${logName}: strip PanelLoaded after ${Date.now() - start}ms`)
-			);
-			$.RegisterEventHandler('ImageFailedLoad', panel, () =>
-				this.catLog(`${logName}: strip FAILED after ${Date.now() - start}ms`)
-			);
-		};
-		if (method === 'strip') {
-			const strip = $.CreatePanel('AnimatedImageStrip', parent, '', {
-				class: 'gifplayer',
-				src: url,
-				frametime: `${Math.round(GIF_FRAME_TIME * 1000)}ms`,
-				defaultframe: '0',
-				animating: 'true',
-				scaling: 'stretch'
-			});
-			strip.hittest = false;
-			watch(strip);
-			$.RegisterEventHandler('ImageFailedLoad', strip, () => onFail?.('strip failed to load'));
-			return strip;
-		}
-
-		const clip = $.CreatePanel('Panel', parent, '', { class: 'gifplayer' });
-		clip.hittest = false;
-		const img = $.CreatePanel('Image', clip, '', { class: 'gifplayer__strip', scaling: 'stretch' });
-		img.hittest = false;
-		$.RegisterEventHandler('ImageFailedLoad', img, () => onFail?.('strip failed to load'));
-		watch(img);
-		img.SetImage(url);
-		let frame = 0;
-		const tick = () => {
-			if (!clip.IsValid()) return; // player removed (new results / background changed): stop
-			const h = clip.actuallayoutheight / (clip.actualuiscale_y || 1);
-			if (h > 0) {
-				img.style.height = `${h * frames}px`;
-				img.style.position = `0px ${-frame * h}px 0px`;
-				frame = (frame + 1) % frames;
-			}
-			$.Schedule(GIF_FRAME_TIME, tick);
-		};
-		tick();
-		return clip;
+		return createGifPlayer(parent, url, frames, method, {
+			onFail,
+			log: logName ? (msg) => this.catLog(`${logName}: ${msg}`) : undefined
+		});
 	}
 
 	setCatStatus(msg: string, isError: boolean) {

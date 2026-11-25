@@ -7,7 +7,7 @@
  * value (confirmed in-game - it reads back e.g. "Pos: -14592.00 -14080.00 14957.40").
  *
  * `show-pos.ts` (the only JS context with access to those labels) parses them and calls publishPlayerState()
- * every frame; other HUD frames (zone-debug, segment-timer) read it with readPlayerState(). The hand-off is the
+ * every frame; other HUD frames (segment-timer) read it with readPlayerState(). The hand-off is the
  * cross-context global object (`UiToolkitAPI.GetGlobalObject()`), the same shared object the HUD customizer uses
  * to expose its handler across contexts - so a value written in one panel's JS context is visible in all others.
  *

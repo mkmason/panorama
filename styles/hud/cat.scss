@@ -1,0 +1,59 @@
+@use '../config' as *;
+
+// Cat HUD element (layout/hud/cat.xml, scripts/hud/cat.ts).
+// Full-screen, transparent containers so the customizer can absolutely-position the cat.
+.cathud-frame,
+.cathud-root {
+	width: 100%;
+	height: 100%;
+}
+
+// The positioned box. Width and height come from the customizer (resizeX / resizeY).
+.cathud {
+	width: 240px;
+	height: 160px;
+
+	// Pure-Panorama panel: the customizer toggles it via panel.enabled, which does nothing visually on its own
+	&:disabled {
+		visibility: collapse;
+	}
+
+	&__view {
+		width: 100%;
+		height: 100%;
+		overflow: clip;
+	}
+
+	&__img {
+		width: 100%;
+		height: 100%;
+	}
+
+	// Shown until the first cat loads, or when loading fails with no cat on screen
+	&__status {
+		horizontal-align: center;
+		vertical-align: center;
+		font-family: $font-primary;
+		font-size: 14px;
+		color: rgba(255, 255, 255, 0.75);
+		text-shadow: 0px 1px 1.5px 1 rgba(0, 0, 0, 0.9);
+
+		&--hidden {
+			visibility: collapse;
+		}
+	}
+
+	// Probes must keep their texture size (they're measured), so the host doesn't squish them. NOT opacity 0: in the
+	// HUD a fully transparent panel's children never got laid out (the probe stayed 0x0 although its image had
+	// loaded). Instead it's 1px, clipped, and drawn under the cat view.
+	&__probehost {
+		width: 1px;
+		height: 1px;
+		overflow: clip;
+	}
+
+	&__probe {
+		width: fit-children;
+		height: fit-children;
+	}
+}

@@ -6,7 +6,7 @@ import { parseShowPosVec, publishPlayerState } from 'common/player-state';
 // This C++ HudShowPos panel is the ONLY source of player world position in Panorama (there's no position API).
 // It writes the live origin/angles into its labels' dialog variables each frame, but ONLY when cl_showpos is on
 // (ships at 0). We force it on, parse the resolved label text (`.text` returns the substituted value), and
-// publish it to the cross-context global so zone-debug / segment-timer can do real zone collision - including
+// publish it to the cross-context global so segment-timer can do real zone collision - including
 // during savestate practice, since cl_showpos updates regardless of timer state. See PANORAMA_NOTES §6h/§6l.
 @PanelHandler()
 class HudShowPosHandler {

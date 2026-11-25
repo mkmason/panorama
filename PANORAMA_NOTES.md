@@ -723,7 +723,7 @@ zone editor works. Filed for a future "keep zones visible in practice" attempt.
     test:** set 2 or 4, then LOAD a savestate (enter DISABLED/practice) and check whether stage zones stay drawn —
     if any mode ignores the timer gate, that's a zero‑code way to keep zones visible in practice.
 
-### 6j. Zone Debug harness (BUILT — `hud/zone-debug.{ts,xml,scss}`, class `ZoneDebugHandler`)
+### 6j. Zone Debug harness (REMOVED — its findings live on in the Segment Timer, `common/zone-geometry.ts` and `common/player-state.ts`; kept here for the record)
 A pure‑Panorama HUD `<Frame>` (same no‑C++ pattern as the Segment Timer §6g), added to `hud.xml` as
 `zone-debug.xml`. A research scratchpad for the §6h questions; **not a customizer component** (deliberately — no
 `hud_default.kv3` block, so `panorama_reload` picks up all edits, no restart). Toggle it with the console convar
@@ -897,6 +897,13 @@ identical between them — copy one to add a fourth (change only the URL, the re
   / `api.adviceslip.com` added to `domain_whitelist.kv3` — **startup‑only, so a full game RESTART is needed** before
   the fetches work (until then `AsyncWebRequest` throws synchronously — caught, so it just fails quietly and retries).
   The new `hud_default.kv3` blocks (`Affirmations`, `Jokes`, `Advice`) likewise need a restart, not just `panorama_reload`.
+- **Cat** (`#CatHud`, class `CatHudHandler`, `hud/cat.{ts,xml,scss}`): a cataas.com cat image instead of text, resizable
+  in X and Y. Still JPEG/PNG cats, or animated GIFs played from a vertical frame strip; the API helpers, frame-count
+  probe and strip player are shared with the main-menu background selector in `common/cataas.ts` (read its header
+  for why GIFs need a strip and why strips are JPEG). Loop = a 1s self-scheduled check (new cat when none is shown,
+  when requested, or when `intervalSeconds` passed; 0 = keep). A new cat is added on top and the old one deleted once
+  it loads (20s timeout). A "New Cat" button lives in the settings via a `NONE` style with `render`. Defaults in
+  `hud_default.kv3` block `CatHud`; whitelist `cataas.com`.
 
 ---
 

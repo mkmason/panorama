@@ -1,7 +1,7 @@
 import type { Region } from 'common/web/types/models/models';
 
 /**
- * Zone geometry helpers (shared by zone-debug + segment-timer).
+ * Zone geometry helpers (used by the segment timer; the zone-debug harness that also used them was removed).
  * Side-effect-free, safe to import from any panel context.
  */
 
