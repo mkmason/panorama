@@ -26,5 +26,8 @@
 
 		// Added for the Advice HUD element (no auth; returns { slip: { advice } })
 		"api.adviceslip.com",
+
+		// Added for the main-menu background selector's cat images (cataas.com, no auth; /cat?json=true returns { id, url, mimetype })
+		"cataas.com",
 	]
 }

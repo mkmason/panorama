@@ -1,0 +1,151 @@
+@use '../../config' as *;
+
+// CS:S skin for the "Missing recommended games" popup (layout/modals/popups/required-games.xml), applied by
+// RequiredGamesPopupHandler when the CS:S main menu background is active. Same look as the CS:S quit dialog
+// (css-quit.scss): translucent warm-grey rounded box, small bold caps title, dim text, beveled outlined buttons.
+
+$css-text: #ecece3;
+$css-text-dim: #c2c2b5;
+$css-field: rgba(20, 20, 16, 0.55);
+$css-line-dark: rgba(0, 0, 0, 0.45);
+$css-line-light: rgba(255, 255, 255, 0.5);
+$css-engrave: 0px 1px 0px rgba(0, 0, 0, 0.4);
+
+.PopupPanel.reqgames--css {
+	width: 400px;
+	min-width: 0px;
+	max-width: 400px;
+	padding: 10px 16px 18px 16px;
+	border-radius: 5px;
+	background-color: rgba(125, 124, 121, 0.82);
+	box-shadow: 0 4px 24px 2px rgba(0, 0, 0, 0.6);
+}
+
+.reqgames--css {
+	.reqgames__title {
+		margin-bottom: 12px;
+		horizontal-align: left;
+		text-align: left;
+		font-family: $font;
+		font-size: 11px;
+		font-weight: bold;
+		text-transform: uppercase;
+		color: $white;
+		text-shadow: $css-engrave;
+	}
+
+	.reqgames__message {
+		width: 100%;
+		margin-bottom: 6px;
+		font-family: $font;
+		font-size: 13px;
+		color: $css-text-dim;
+	}
+
+	.reqgames__game {
+		margin-top: 4px;
+		margin-bottom: 2px;
+	}
+
+	.reqgames__game-name {
+		font-family: $font;
+		font-size: 13px;
+		color: $css-text;
+		text-shadow: $css-engrave;
+	}
+
+	.reqgames__game-status {
+		font-family: $font;
+		font-size: 13px;
+		font-weight: bold;
+	}
+
+	.reqgames__game-status.wash-color-green {
+		color: #a9d47f;
+	}
+
+	.reqgames__game-status.wash-color-red {
+		color: #e0806a;
+	}
+
+	.reqgames__buttons {
+		margin-top: 10px;
+	}
+
+	// "Don't show again": sunken square like the CS:S Options checkboxes
+	.reqgames__check .TickBox {
+		width: 14px;
+		height: 14px;
+		margin-right: 7px;
+		vertical-align: center;
+		border-radius: 0;
+		background-color: $css-field;
+		border-top: 1px solid $css-line-dark;
+		border-left: 1px solid $css-line-dark;
+		border-right: 1px solid $css-line-light;
+		border-bottom: 1px solid $css-line-light;
+		box-shadow: none;
+		background-image: none;
+	}
+
+	.reqgames__check:hover .TickBox {
+		background-color: rgba(40, 40, 36, 0.6);
+	}
+
+	.reqgames__check:selected .TickBox {
+		background-color: $css-field;
+		background-image: url('file://{images}/checkmark.svg');
+		background-size: 90% 90%;
+		background-repeat: no-repeat;
+		background-position: 50% 50%;
+	}
+
+	.reqgames__check-label {
+		font-family: $font;
+		font-size: 13px;
+		color: $css-text-dim;
+		vertical-align: center;
+	}
+
+	.reqgames__check:hover .reqgames__check-label {
+		color: $css-text;
+	}
+
+	.reqgames__btn {
+		height: 25px;
+		min-width: 0px;
+		padding: 0 8px;
+		margin: 0 0 0 10px;
+		border-radius: 0;
+		box-shadow: none;
+		background-color: rgba(0, 0, 0, 0.06);
+		border-top: 1px solid $css-line-light;
+		border-left: 1px solid $css-line-light;
+		border-right: 1px solid $css-line-dark;
+		border-bottom: 1px solid $css-line-dark;
+		transition: background-color 0.1s ease-in-out 0s;
+
+		&:hover {
+			background-color: rgba(255, 255, 255, 0.08);
+			sound: 'UIPanorama.ButtonRollover';
+		}
+
+		&:active {
+			border-top: 1px solid $css-line-dark;
+			border-left: 1px solid $css-line-dark;
+			border-right: 1px solid $css-line-light;
+			border-bottom: 1px solid $css-line-light;
+		}
+	}
+
+	.reqgames__btn-text {
+		font-family: $font;
+		font-size: 13px;
+		font-weight: normal;
+		text-transform: none;
+		color: $white;
+		text-shadow: $css-engrave;
+		vertical-align: center;
+		margin: 0;
+	}
+}

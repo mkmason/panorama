@@ -17,6 +17,8 @@ class RequiredGamesPopupHandler implements OnPanelLoad {
 
 	onPanelLoad() {
 		const cp = $.GetContextPanel();
+		// CS:S main menu background (settings.mainMenuBackground === 2): skin the popup like the CS:S quit dialog
+		cp.SetHasClass('reqgames--css', Number($.persistentStorage.getItem('settings.mainMenuBackground')) === 2);
 		this.mapID = cp.GetAttributeInt('mapID', -1);
 		if (this.mapID === -1) {
 			throw new Error('RequiredGamesHandler: mapID is not set');

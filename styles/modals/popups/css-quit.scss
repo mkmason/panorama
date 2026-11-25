@@ -9,8 +9,26 @@ $css-line-dark: rgba(0, 0, 0, 0.45);
 $css-line-light: rgba(255, 255, 255, 0.5);
 $css-engrave: 0px 1px 0px rgba(0, 0, 0, 0.4);
 
-.PopupPanel.css-quit {
+// Full-screen popup root (transparent) so clicks outside the dialog land on the backdrop button and close it.
+.PopupPanel.css-quit-root {
+	flow-children: none;
+	width: 100%;
+	height: 100%;
+	padding: 0;
+	border-radius: 0;
+	background-color: none;
+	box-shadow: none;
+}
+
+.css-quit-root__backdrop {
+	width: 100%;
+	height: 100%;
+}
+
+.css-quit {
 	flow-children: down;
+	horizontal-align: center;
+	vertical-align: middle;
 	width: 296px;
 	padding: 10px 16px 20px 16px;
 	border-radius: 5px;

@@ -47,6 +47,56 @@ const NEKOS_BEST_API = 'https://nekos.best/api/v2';
 const NEKO_CATEGORIES = ['neko', 'waifu', 'husbando', 'kitsune'];
 const NEKO_RESULT_COUNT = 15; // results per search / browse (API max is 20)
 
+// cataas.com cat-image API (https://cataas.com/doc.html) — the background selector's second online source. No auth;
+// JSON from /api/*, images from /cat/{id}[/says/{text}] with optional ?format= (png/jpeg) and ?filter= / ?blur=.
+// The JSON calls need `cataas.com` in domain_whitelist.kv3; image display via SetImage isn't whitelist-gated.
+// Panorama's Image can't decode GIF/WebP/AVIF from a URL. Asking cataas for a GIF as ?format=png returns ONE image
+// with every frame stacked vertically (W x H*frames), and there is no single-frame option. Shown as-is that draws as
+// slices and a full-size strip (e.g. 350x15840) crashes the game. So:
+//  - "Still" cats are only the ones that are JPEG/PNG to begin with.
+//  - "Animated GIF" cats are requested as such a strip at a SMALL, explicit frame size (?width&height, so every frame
+//    is exactly that size) with the total strip height capped at GIF_MAX_STRIP, then played back by showing one
+//    frame at a time: either by stepping the strip inside a clipping panel, or with Panorama's AnimatedImageStrip.
+//    The frame count comes from a tiny probe: the same GIF at 10x10 per frame is 10 x 10*frames.
+const CATAAS = 'https://cataas.com';
+const CAT_RESULT_COUNT = 15;
+const CAT_STATIC_TYPE = /^image\/(jpeg|png)$/;
+type CatKind = 'still' | 'gif';
+const CAT_KINDS: [CatKind, string][] = [
+	['still', 'Still (JPEG/PNG)'],
+	['gif', 'Animated GIF (experimental)']
+];
+type GifMethod = 'step' | 'strip';
+const GIF_METHODS: [GifMethod, string][] = [
+	['step', 'Stepped strip'],
+	['strip', 'AnimatedImageStrip']
+];
+const GIF_RESULT_COUNT = 8;
+const GIF_MAX_STRIP = 8192; // px: cap on a whole frame strip's height (the crash was a ~16k px tall strip)
+const GIF_FRAME_TIME = 0.08; // s per frame (GIF frame delays aren't available, so a fixed ~12 fps)
+// Timing logs for the cat GIF loading (console, prefix [CatGif +ms]): API call, each frame-count probe and each
+// strip image load, measured from when Load cats was pressed. Set to false to silence them.
+const CAT_GIF_DEBUG = false;
+// Background override value for an animated cat: `catgif:<method>:<frames>:<strip url>`
+const CAT_GIF_OVERRIDE = /^catgif:(step|strip):(\d+):(.+)$/;
+// One-time cleanup flag: drops a cataas background saved before GIFs were excluded (it may be a crashing frame strip).
+const CAT_GIF_CLEANUP_KEY = 'settings.mainMenuBackgroundCatGifCleanup';
+const CAT_FORMATS: [string, string][] = [
+	['', 'Original'],
+	['png', 'PNG'],
+	['jpeg', 'JPEG']
+];
+const CAT_FILTERS: [string, string][] = [
+	['', 'None'],
+	['mono', 'Mono'],
+	['negate', 'Negate'],
+	['blur', 'Blur']
+];
+interface CatInfo {
+	id: string;
+	mimetype: string;
+}
+
 @PanelHandler()
 class MainMenuHandler implements OnPanelLoad {
 	readonly panels = {
@@ -72,6 +122,17 @@ class MainMenuHandler implements OnPanelLoad {
 
 	// Bumped on each nekos.best request so a slower earlier one that resolves late is discarded.
 	nekoGen = 0;
+
+	// Online-image source shown in the background selector, and the cataas.com test options
+	bgSource: 'neko' | 'cat' = 'neko';
+	catFormat = '';
+	catFilter = '';
+	catGen = 0;
+	catKind: CatKind = 'still';
+	gifMethod: GifMethod = 'step';
+	catGifs: CatInfo[] | null = null; // the gif-tagged cats (one page of up to 100), fetched once
+	catT0 = 0; // Date.now() when the current cat batch started loading (CAT_GIF_DEBUG timings)
+	catCount: number | null = null; // total cats (/api/count), for a random page offset
 
 	constructor() {
 		$.RegisterForUnhandledEvent('ShowMainMenu', () => this.onShowMainMenu());
@@ -381,9 +442,20 @@ class MainMenuHandler implements OnPanelLoad {
 		// 1) A user-chosen background override (picked in the background selector) wins over the themed
 		//    default. A full http(s) URL (e.g. a nekos.best image) is shown directly; a `.webm` name → video;
 		//    any other image name → static image from images/backgrounds.
-		const override = $.persistentStorage.getItem<string>(BG_OVERRIDE_KEY);
+		let override = $.persistentStorage.getItem<string>(BG_OVERRIDE_KEY);
+		// A cataas background saved before GIFs were excluded may be a converted GIF: an all-frames strip that crashes
+		// the game. Drop any saved cataas background once (it can't be told apart from a still one by its URL).
+		if (!$.persistentStorage.getItem(CAT_GIF_CLEANUP_KEY)) {
+			$.persistentStorage.setItem(CAT_GIF_CLEANUP_KEY, true);
+			if (override?.startsWith(CATAAS)) {
+				$.persistentStorage.setItem(BG_OVERRIDE_KEY, '');
+				override = '';
+			}
+		}
 		if (override) {
-			if (this.isRemoteUrl(override)) this.showBackgroundImageUrl(override);
+			const gif = CAT_GIF_OVERRIDE.exec(override);
+			if (gif) this.showBackgroundGif(gif[1] as GifMethod, Number(gif[2]), gif[3]);
+			else if (this.isRemoteUrl(override)) this.showBackgroundImageUrl(override);
 			else if (this.isVideoFile(override)) this.showBackgroundVideo(override);
 			else this.showBackgroundImage(override);
 			return;
@@ -415,6 +487,7 @@ class MainMenuHandler implements OnPanelLoad {
 
 	/** Show `file` (in videos/backgrounds) as the animated movie background. */
 	showBackgroundVideo(file: string) {
+		this.clearGifBackground();
 		this.panels.movie.visible = true;
 		this.panels.movie.SetReadyForDisplay(true);
 		this.panels.image.visible = false;
@@ -425,11 +498,33 @@ class MainMenuHandler implements OnPanelLoad {
 
 	/** Show `file` (in images/backgrounds) as the static image background. */
 	showBackgroundImage(file: string) {
+		this.clearGifBackground();
 		this.panels.movie.visible = false;
 		this.panels.movie.SetReadyForDisplay(false);
 		this.panels.image.visible = true;
 		this.panels.image.SetReadyForDisplay(true);
 		this.panels.image.SetImage(`file://{images}/backgrounds/${file}`);
+	}
+
+	/** Play an animated cat (a vertical frame strip) as the background. */
+	showBackgroundGif(method: GifMethod, frames: number, url: string) {
+		this.panels.movie.visible = false;
+		this.panels.movie.SetReadyForDisplay(false);
+		this.panels.image.visible = false;
+		this.panels.image.SetReadyForDisplay(false);
+		const host = $('#MainMenuGifBackground');
+		if (!host) return;
+		host.RemoveAndDeleteChildren();
+		host.visible = true;
+		this.catT0 = Date.now();
+		this.createGifPlayer(host, url, frames, method, undefined, `background ${frames} frames`);
+	}
+
+	clearGifBackground() {
+		const host = $('#MainMenuGifBackground');
+		if (!host) return;
+		host.RemoveAndDeleteChildren();
+		host.visible = false;
 	}
 
 	/** True if `s` is a remote http(s) URL (e.g. a nekos.best image) rather than a local file name. */
@@ -440,6 +535,7 @@ class MainMenuHandler implements OnPanelLoad {
 	/** Show a remote image `url` (e.g. a nekos.best search result) as the static background. SetImage takes
 	 *  a CDN url directly and, unlike $.AsyncWebRequest, is NOT domain-whitelist-gated. */
 	showBackgroundImageUrl(url: string) {
+		this.clearGifBackground();
 		this.panels.movie.visible = false;
 		this.panels.movie.SetReadyForDisplay(false);
 		this.panels.image.visible = true;
@@ -461,10 +557,13 @@ class MainMenuHandler implements OnPanelLoad {
 		this.setBackgroundStatus('', false);
 		const current = $.persistentStorage.getItem<string>(BG_OVERRIDE_KEY) ?? '';
 		const input = $<TextEntry>('#BackgroundNameInput');
-		if (input) input.text = this.isRemoteUrl(current) ? '' : current; // don't dump a long URL into the name box
+		const isGif = CAT_GIF_OVERRIDE.test(current);
+		// don't dump a long URL (or an animated cat's catgif: value) into the name box
+		if (input) input.text = this.isRemoteUrl(current) || isGif ? '' : current;
 		// Preview the current image (the probe's PanelLoaded fires but pendingBackground is null → no-op).
 		const probe = $<Image>('#BackgroundProbe');
-		if (probe && current) {
+		// (no preview for an animated cat: its image is a strip of every frame, and it isn't a local file)
+		if (probe && current && !isGif) {
 			if (this.isRemoteUrl(current)) probe.SetImage(current);
 			else if (!this.isVideoFile(current)) probe.SetImage(`file://{images}/backgrounds/${current}`);
 		}
@@ -475,6 +574,21 @@ class MainMenuHandler implements OnPanelLoad {
 		const nekoInput = $<TextEntry>('#NekoSearchInput');
 		if (nekoInput) nekoInput.text = '';
 		this.browseNekoCategory('neko');
+
+		// Cat images: build the option chips; cats load when that source is first shown.
+		this.populateCatOptions();
+		this.setCatStatus('', false);
+		this.showBgSource(this.bgSource);
+	}
+
+	/** Show one online-image source (nekos.best or cataas.com) and highlight its switch button. */
+	showBgSource(src: 'neko' | 'cat') {
+		this.bgSource = src;
+		$('#BgSourceNeko')?.SetHasClass('bgselector__source--hidden', src !== 'neko');
+		$('#BgSourceCat')?.SetHasClass('bgselector__source--hidden', src !== 'cat');
+		$('#BgSrc_neko')?.SetHasClass('bgselector__preset--active', src === 'neko');
+		$('#BgSrc_cat')?.SetHasClass('bgselector__preset--active', src === 'cat');
+		if (src === 'cat' && !$('#CatResults')?.GetChildCount()) void this.loadCats();
 	}
 
 	closeBackgroundSelector() {
@@ -677,6 +791,301 @@ class MainMenuHandler implements OnPanelLoad {
 		status.SetHasClass('bgselector__status--hidden', !msg);
 	}
 
+	// --- Cat images (cataas.com) ---------------------------------------------------------------------------
+
+	/** (Re)build the Type / Format / Filter chips, highlighting the current choice of each. */
+	populateCatOptions() {
+		const build = (holderId: string, options: [string, string][], current: string, pick: (v: string) => void) => {
+			const holder = $(holderId);
+			if (!holder) return;
+			holder.RemoveAndDeleteChildren();
+			for (const [value, label] of options) {
+				const btn = $.CreatePanel('Button', holder, '', { class: 'bgselector__preset' });
+				btn.SetHasClass('bgselector__preset--active', value === current);
+				btn.SetPanelEvent('onactivate', () => {
+					pick(value);
+					this.populateCatOptions();
+					void this.loadCats();
+				});
+				$.CreatePanel('Label', btn, '', { class: 'bgselector__preset-text', text: label });
+			}
+		};
+		build('#CatKinds', CAT_KINDS, this.catKind, (v) => (this.catKind = v as CatKind));
+		build('#CatGifMethods', GIF_METHODS, this.gifMethod, (v) => (this.gifMethod = v as GifMethod));
+		build('#CatFormats', CAT_FORMATS, this.catFormat, (v) => (this.catFormat = v));
+		build('#CatFilters', CAT_FILTERS, this.catFilter, (v) => (this.catFilter = v));
+	}
+
+	/** Image URL for a cat with the current caption / format / filter options. `width` (and `height`, which fixes
+	 *  every frame's size) shrink it; `format` overrides the chosen format (GIF strips are always PNG). */
+	catImageUrl(id: string, width?: number, height?: number, format = this.catFormat): string {
+		const says = ($<TextEntry>('#CatSaysInput')?.text ?? '').trim();
+		let url = `${CATAAS}/cat/${encodeURIComponent(id)}`;
+		const params: string[] = [];
+		if (says) {
+			url += `/says/${encodeURIComponent(says)}`;
+			params.push('fontSize=50', 'fontColor=white');
+		}
+		if (format) params.push(`format=${format}`);
+		if (this.catFilter === 'blur') params.push('blur=6');
+		else if (this.catFilter) params.push(`filter=${this.catFilter}`);
+		if (width) params.push(`width=${width}`);
+		if (height) params.push(`height=${height}`);
+		return params.length > 0 ? `${url}?${params.join('&')}` : url;
+	}
+
+	/** Fetch a random batch of cats of the chosen type and render them as test thumbnails. */
+	/** CAT_GIF_DEBUG timing log, in ms since the current batch started loading. */
+	catLog(msg: string) {
+		if (CAT_GIF_DEBUG) $.Msg(`[CatGif +${Date.now() - this.catT0}ms] ${msg}`);
+	}
+
+	async loadCats() {
+		const gen = ++this.catGen;
+		this.catT0 = Date.now();
+		this.catLog(
+			`--- loading ${this.catKind} cats (gif play: ${this.gifMethod}, format: ${this.catFormat || 'original'})`
+		);
+		this.setCatStatus('Loading cats...', false);
+		try {
+			let pool: CatInfo[];
+			if (this.catKind === 'gif') {
+				// /api/count has no tag filter, so take the first page of gif-tagged cats once and sample from it
+				if (this.catGifs) this.catLog('gif list: cached');
+				else {
+					this.catLog('gif list: GET /api/cats?tags=gif');
+					this.catGifs = await this.nekoFetch(`${CATAAS}/api/cats?tags=gif&limit=100`);
+					this.catLog(`gif list: got ${this.catGifs?.length ?? 0}`);
+				}
+				pool = (this.catGifs ?? []).filter((c) => c?.mimetype === 'image/gif');
+			} else {
+				if (this.catCount == null)
+					this.catCount = Number((await this.nekoFetch(`${CATAAS}/api/count`))?.count) || 0;
+				const skip = Math.floor(Math.random() * Math.max(0, this.catCount - 100));
+				const page: CatInfo[] = (await this.nekoFetch(`${CATAAS}/api/cats?limit=100&skip=${skip}`)) ?? [];
+				// Still JPEG/PNG cats only (see CAT_STATIC_TYPE): a GIF here would be a full-size frame strip
+				pool = page.filter((c) => CAT_STATIC_TYPE.test(c?.mimetype ?? ''));
+			}
+			if (gen !== this.catGen) return;
+
+			const cats = pool
+				.filter((c) => typeof c?.id === 'string')
+				.sort(() => Math.random() - 0.5)
+				.slice(0, this.catKind === 'gif' ? GIF_RESULT_COUNT : CAT_RESULT_COUNT);
+			if (this.catKind === 'gif') this.renderGifResults(cats);
+			else this.renderCatResults(cats);
+			this.setCatStatus(
+				cats.length > 0
+					? this.catKind === 'gif'
+						? `${cats.length} GIFs (${this.gifMethod === 'step' ? 'stepped strip' : 'AnimatedImageStrip'}) — click one to apply. GIF strips load as JPEG (much smaller) unless Format is PNG.`
+						: `${cats.length} cats — click one to apply. A red tag means Panorama couldn't load that image.`
+					: 'No cats found.',
+				cats.length === 0
+			);
+		} catch (e) {
+			if (gen !== this.catGen) return;
+			this.renderCatResults([]);
+			this.setCatStatus('Loading failed — is cataas.com reachable and whitelisted (needs a game restart)?', true);
+			$.Msg(`[BgSelector] cataas.com request failed: ${String(e)}`);
+		}
+	}
+
+	/** Thumbnails tagged with the source type (and any conversion); failed loads are marked red. */
+	renderCatResults(cats: CatInfo[]) {
+		const grid = $('#CatResults');
+		if (!grid) return;
+		grid.RemoveAndDeleteChildren();
+		for (const cat of cats) {
+			const type = (cat.mimetype ?? '').replace('image/', '') || '?';
+			const url = this.catImageUrl(cat.id);
+			const tile = $.CreatePanel('Button', grid, '', { class: 'bgselector__nekoresult bgselector__cattile' });
+			const img = $.CreatePanel('Image', tile, '', {
+				class: 'bgselector__catimg',
+				scaling: 'stretch-to-cover-preserve-aspect'
+			});
+			img.hittest = false;
+			const tag = $.CreatePanel('Label', tile, '', {
+				class: 'bgselector__cattag',
+				text: this.catFormat ? `${type} -> ${this.catFormat}` : type
+			});
+			$.RegisterEventHandler('ImageFailedLoad', img, () => {
+				tag.text += ' (failed)';
+				tag.AddClass('bgselector__cattag--failed');
+			});
+			img.SetImage(this.catImageUrl(cat.id, 240));
+			tile.SetPanelEvent('onactivate', () => {
+				this.commitBackgroundOverride(url);
+				this.setCatStatus(`Applied ${url}`, false);
+			});
+		}
+	}
+
+	/** GIF thumbnails: probe each one's frame count, then play it from a small frame strip. */
+	renderGifResults(cats: CatInfo[]) {
+		const grid = $('#CatResults');
+		if (!grid) return;
+		grid.RemoveAndDeleteChildren();
+		$('#CatProbeHost')?.RemoveAndDeleteChildren();
+		const gen = this.catGen;
+		const method = this.gifMethod;
+		// Strip image format: JPEG unless PNG is chosen. Measured on 8 GIFs at 120x80 frames, PNG strips were
+		// 0.04-3.8 MB and took up to 3.4 s (7 s in-game, where the largest files were the slowest); JPEG strips were
+		// ~10x smaller and took 0.2-0.9 s. The GIFs have no transparency to lose.
+		const stripFormat = this.catFormat === 'png' ? 'png' : 'jpeg';
+		for (const [i, cat] of cats.entries()) {
+			const name = `#${i + 1} ${cat.id}`;
+			const tile = $.CreatePanel('Button', grid, '', { class: 'bgselector__nekoresult bgselector__cattile' });
+			const tag = $.CreatePanel('Label', tile, '', { class: 'bgselector__cattag', text: 'gif: probing…' });
+			const fail = (why: string) => {
+				if (!tag.IsValid()) return;
+				tag.text = `gif: ${why}`;
+				tag.AddClass('bgselector__cattag--failed');
+			};
+			this.probeGifFrames(cat.id, name)
+				.then((frames) => {
+					if (gen !== this.catGen || !tile.IsValid()) return;
+					// Thumbnail frames: 120x80 (stepped) or 80x80 (AnimatedImageStrip, which wants square frames),
+					// shrunk if the strip would get too tall
+					const h = Math.max(8, Math.min(80, Math.floor(GIF_MAX_STRIP / frames)));
+					const w = method === 'strip' ? h : Math.round(h * 1.5);
+					const player = this.createGifPlayer(
+						tile,
+						this.catImageUrl(cat.id, w, h, stripFormat),
+						frames,
+						method,
+						fail,
+						`${name} thumb ${w}x${h}x${frames} ${stripFormat}`
+					);
+					tile.MoveChildBefore(player, tag);
+					tag.text = `gif: ${frames} frames`;
+
+					// The background strip: 16:9 frames (square for AnimatedImageStrip), as big as the cap allows
+					const bh = Math.max(8, Math.min(540, Math.floor(GIF_MAX_STRIP / frames)));
+					const bw = method === 'strip' ? bh : Math.min(1000, Math.round((bh * 16) / 9));
+					const bgUrl = this.catImageUrl(cat.id, bw, bh, stripFormat);
+					tile.SetPanelEvent('onactivate', () => {
+						this.commitBackgroundOverride(`catgif:${method}:${frames}:${bgUrl}`);
+						this.setCatStatus(`Applied animated cat: ${frames} frames of ${bw}x${bh} (${bgUrl})`, false);
+					});
+				})
+				.catch((e) => {
+					fail('probe failed');
+					$.Msg(`[BgSelector] gif frame probe failed for ${cat.id}: ${String(e)}`);
+				});
+		}
+	}
+
+	/** Frame count of a GIF cat: loads it as a strip of 10x10 frames (10 x 10*frames) and reads the image's size. */
+	probeGifFrames(id: string, name = id): Promise<number> {
+		return new Promise((resolve, reject) => {
+			const host = $('#CatProbeHost');
+			if (!host) {
+				reject('no probe host');
+				return;
+			}
+			const probe = $.CreatePanel('Image', host, '', { class: 'bgselector__catprobe' });
+			let done = false;
+			const start = Date.now();
+			const finish = (frames: number | null, why = '') => {
+				if (done) return;
+				done = true;
+				this.catLog(
+					`${name} probe: ${frames ? `${frames} frames` : `FAILED (${why})`} after ${Date.now() - start}ms`
+				);
+				if (probe.IsValid()) probe.DeleteAsync(0);
+				if (frames) resolve(frames);
+				else reject(why);
+			};
+			const read = (tries: number) => {
+				if (done) return;
+				if (!probe.IsValid()) return finish(null, 'probe removed');
+				// Layout size of an unsized Image is its texture size; content size as a fallback
+				const w = probe.actuallayoutwidth || probe.contentwidth;
+				const h = probe.actuallayoutheight || probe.contentheight;
+				if (w > 0 && h > 0) return finish(Math.max(1, Math.round(h / w)));
+				if (tries <= 0) return finish(null, 'timed out');
+				$.Schedule(0.1, () => read(tries - 1));
+			};
+			$.RegisterEventHandler('ImageFailedLoad', probe, () => finish(null, 'image failed to load'));
+			$.RegisterEventHandler('PanelLoaded', probe, () =>
+				this.catLog(`${name} probe: PanelLoaded after ${Date.now() - start}ms`)
+			);
+			this.catLog(`${name} probe: requested`);
+			probe.SetImage(`${CATAAS}/cat/${encodeURIComponent(id)}?format=png&width=10&height=10`);
+			read(150); // up to ~15 s
+		});
+	}
+
+	/**
+	 * Play a vertical frame strip (`frames` frames of equal size, stacked top to bottom) inside `parent`, filling it.
+	 *  - 'step': a clipping panel holding the whole strip as an Image, moved up one frame height every GIF_FRAME_TIME.
+	 *  - 'strip': Panorama's AnimatedImageStrip (built for horizontal strips of square frames; vertical is a test).
+	 */
+	createGifPlayer(
+		parent: GenericPanel,
+		url: string,
+		frames: number,
+		method: GifMethod,
+		onFail?: (why: string) => void,
+		logName?: string
+	): GenericPanel {
+		// CAT_GIF_DEBUG: time from requesting the strip to Panorama reporting it loaded (or failed)
+		const start = Date.now();
+		const watch = (panel: GenericPanel) => {
+			if (!logName) return;
+			this.catLog(`${logName}: strip requested (${method})`);
+			$.RegisterEventHandler('PanelLoaded', panel, () =>
+				this.catLog(`${logName}: strip PanelLoaded after ${Date.now() - start}ms`)
+			);
+			$.RegisterEventHandler('ImageFailedLoad', panel, () =>
+				this.catLog(`${logName}: strip FAILED after ${Date.now() - start}ms`)
+			);
+		};
+		if (method === 'strip') {
+			const strip = $.CreatePanel('AnimatedImageStrip', parent, '', {
+				class: 'gifplayer',
+				src: url,
+				frametime: `${Math.round(GIF_FRAME_TIME * 1000)}ms`,
+				defaultframe: '0',
+				animating: 'true',
+				scaling: 'stretch'
+			});
+			strip.hittest = false;
+			watch(strip);
+			$.RegisterEventHandler('ImageFailedLoad', strip, () => onFail?.('strip failed to load'));
+			return strip;
+		}
+
+		const clip = $.CreatePanel('Panel', parent, '', { class: 'gifplayer' });
+		clip.hittest = false;
+		const img = $.CreatePanel('Image', clip, '', { class: 'gifplayer__strip', scaling: 'stretch' });
+		img.hittest = false;
+		$.RegisterEventHandler('ImageFailedLoad', img, () => onFail?.('strip failed to load'));
+		watch(img);
+		img.SetImage(url);
+		let frame = 0;
+		const tick = () => {
+			if (!clip.IsValid()) return; // player removed (new results / background changed): stop
+			const h = clip.actuallayoutheight / (clip.actualuiscale_y || 1);
+			if (h > 0) {
+				img.style.height = `${h * frames}px`;
+				img.style.position = `0px ${-frame * h}px 0px`;
+				frame = (frame + 1) % frames;
+			}
+			$.Schedule(GIF_FRAME_TIME, tick);
+		};
+		tick();
+		return clip;
+	}
+
+	setCatStatus(msg: string, isError: boolean) {
+		const status = $<Label>('#CatStatus');
+		if (!status) return;
+		status.text = msg;
+		status.SetHasClass('bgselector__status--error', isError && !!msg);
+		status.SetHasClass('bgselector__status--hidden', !msg);
+	}
+
 	/** Promise-wrapped GET + JSON parse for nekos.best. */
 	nekoFetch(url: string): Promise<any> {
 		return new Promise((resolve, reject) => {
@@ -728,7 +1137,8 @@ class MainMenuHandler implements OnPanelLoad {
 	 * dark theme.
 	 */
 	toggleCssBackground() {
-		const isCss = Number.parseInt($.persistentStorage.getItem('settings.mainMenuBackground')) === BackgroundMode.CSS;
+		const isCss =
+			Number.parseInt($.persistentStorage.getItem('settings.mainMenuBackground')) === BackgroundMode.CSS;
 		// Clear any background override so the toggle actually changes what's on screen.
 		$.persistentStorage.setItem(BG_OVERRIDE_KEY, '');
 		$.persistentStorage.setItem('settings.mainMenuBackground', isCss ? BackgroundMode.DARK : BackgroundMode.CSS);

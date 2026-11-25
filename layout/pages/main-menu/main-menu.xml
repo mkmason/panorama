@@ -169,6 +169,8 @@
 						<Panel id="MainMenuMovieParent" class="mainmenu__background MainMenuModeOnly" />
 						<!-- Static image background -->
 						<Image id="MainMenuBackground" class="mainmenu__background MainMenuModeOnly" />
+						<!-- Animated cat GIF background (a frame strip played by MainMenuHandler.createGifPlayer) -->
+						<Panel id="MainMenuGifBackground" class="mainmenu__background mainmenu__gifbg MainMenuModeOnly" hittest="false" />
 						<!-- Backbuffer blur: used to blur the backbuffer in the pause menu -->
 						<BaseBlurTarget id="PauseMenuMainMenuBlur" class="mainmenu__pause-blur" blurrects="PauseMenuMainMenuContent">
 							<!-- Backbuffer background -->
@@ -300,9 +302,20 @@
 				<Label class="bgselector__presets-label" text="Included backgrounds" />
 				<Panel id="BackgroundSelectorPresets" class="bgselector__presets" />
 
+				<!-- Online images: one source shown at a time (keeps the window short). MainMenuHandler.showBgSource -->
+				<Label class="bgselector__presets-label" text="Online images" />
+				<Panel class="bgselector__presets bgselector__presets--tight">
+					<Button id="BgSrc_neko" class="bgselector__preset" onactivate="MainMenuHandler.showBgSource('neko')">
+						<Label class="bgselector__preset-text" text="Anime (nekos.best)" />
+					</Button>
+					<Button id="BgSrc_cat" class="bgselector__preset" onactivate="MainMenuHandler.showBgSource('cat')">
+						<Label class="bgselector__preset-text" text="Cats (cataas.com)" />
+					</Button>
+				</Panel>
+
 				<!-- Anime image search via nekos.best (no auth, PNG images). Type a keyword and Search, or pick a
 				     category; click a result thumbnail to set it as the background (stored as a remote URL). -->
-				<Label class="bgselector__presets-label" text="Anime image search — nekos.best" />
+				<Panel id="BgSourceNeko" class="bgselector__source">
 				<Panel class="bgselector__inputrow">
 					<TextEntry id="NekoSearchInput" class="textentry bgselector__input" maxchars="80" placeholder="Search a keyword (e.g. cat, fox), or pick a category" ontextentrysubmit="MainMenuHandler.searchNeko()" />
 					<Button class="bgselector__apply" onactivate="MainMenuHandler.searchNeko()">
@@ -312,6 +325,39 @@
 				<Panel id="NekoCategories" class="bgselector__presets" />
 				<Label id="NekoStatus" class="bgselector__status bgselector__status--hidden" text="" />
 				<Panel id="NekoResults" class="bgselector__nekogrid" />
+				</Panel>
+
+				<!-- Cat images via cataas.com (no auth). Still JPEG/PNG cats, or animated GIFs played from a frame strip
+				     (experimental, two playback methods). Options: format conversion (stills), filters and an optional
+				     caption. Thumbnails are tagged with their type, and marked when Panorama fails to load them. -->
+				<Panel id="BgSourceCat" class="bgselector__source">
+					<Panel class="bgselector__inputrow">
+						<TextEntry id="CatSaysInput" class="textentry bgselector__input" maxchars="40" placeholder="Optional caption (the cat says...)" ontextentrysubmit="MainMenuHandler.loadCats()" />
+						<Button class="bgselector__apply" onactivate="MainMenuHandler.loadCats()">
+							<Label class="bgselector__apply-text" text="Load cats" />
+						</Button>
+					</Panel>
+					<Panel class="bgselector__optrow">
+						<Label class="bgselector__optlabel" text="Type" />
+						<Panel id="CatKinds" class="bgselector__opts" />
+					</Panel>
+					<Panel class="bgselector__optrow">
+						<Label class="bgselector__optlabel" text="GIF play" />
+						<Panel id="CatGifMethods" class="bgselector__opts" />
+					</Panel>
+					<Panel class="bgselector__optrow">
+						<Label class="bgselector__optlabel" text="Format" />
+						<Panel id="CatFormats" class="bgselector__opts" />
+					</Panel>
+					<Panel class="bgselector__optrow">
+						<Label class="bgselector__optlabel" text="Filter" />
+						<Panel id="CatFilters" class="bgselector__opts" />
+					</Panel>
+					<Label id="CatStatus" class="bgselector__status bgselector__status--hidden" text="" />
+					<Panel id="CatResults" class="bgselector__nekogrid" />
+					<!-- Off-screen host for the tiny frame-count probes of GIF cats (see probeGifFrames) -->
+					<Panel id="CatProbeHost" class="bgselector__catprobehost" hittest="false" />
+				</Panel>
 
 				<Panel class="bgselector__actions">
 					<Button class="bgselector__button" onactivate="MainMenuHandler.resetBackgroundOverride()">

@@ -1043,6 +1043,70 @@ $drawer-width: 768px;
 		margin-bottom: 16px;
 	}
 
+	// One online-image source (nekos.best / cataas.com) is shown at a time
+	&__source {
+		width: 100%;
+		flow-children: down;
+
+		&--hidden {
+			visibility: collapse;
+		}
+	}
+
+	&__presets--tight {
+		margin-bottom: 10px;
+	}
+
+	// cataas.com option rows: a fixed-width label and a row of chips
+	&__optrow {
+		width: 100%;
+		flow-children: right;
+	}
+
+	&__optlabel {
+		width: 60px;
+		margin-top: 5px;
+		font-size: 13px;
+		color: rgba(255, 255, 255, 0.55);
+	}
+
+	&__opts {
+		width: fill-parent-flow(1);
+		flow-children: right-wrap;
+	}
+
+	&__catimg {
+		width: 100%;
+		height: 100%;
+	}
+
+	// Holds the GIF frame-count probes: invisible, and not squishing them (their laid-out size is the measurement)
+	&__catprobehost {
+		width: 1px;
+		height: 1px;
+		opacity: 0;
+		overflow: noclip;
+	}
+
+	&__catprobe {
+		width: fit-children;
+		height: fit-children;
+	}
+
+	// Source type / conversion tag in a cat thumbnail's corner; red when the image failed to load
+	&__cattag {
+		horizontal-align: left;
+		vertical-align: bottom;
+		padding: 1px 4px;
+		font-size: 11px;
+		color: $white;
+		background-color: rgba(0, 0, 0, 0.65);
+
+		&--failed {
+			background-color: rgba(190, 50, 40, 0.9);
+		}
+	}
+
 	&__nekoresult {
 		width: 118px;
 		height: 78px;
@@ -1189,6 +1253,7 @@ $bg-css-engrave: 0px 1px 0px rgba(0, 0, 0, 0.4);
 	&__presets-label,
 	&__inputrow,
 	&__presets,
+	&__optrow,
 	&__nekogrid,
 	&__probe,
 	&__actions {
@@ -1207,6 +1272,17 @@ $bg-css-engrave: 0px 1px 0px rgba(0, 0, 0, 0.4);
 		@include bg-css-text(14px);
 		font-weight: bold;
 		margin-bottom: 6px;
+	}
+
+	&__optlabel {
+		@include bg-css-text(13px);
+		color: $bg-css-text-dim;
+		margin-top: 3px;
+	}
+
+	&__cattag {
+		@include bg-css-text(11px);
+		text-shadow: none;
 	}
 
 	&__input {
@@ -1319,4 +1395,15 @@ $bg-css-engrave: 0px 1px 0px rgba(0, 0, 0, 0.4);
 			border-color: $bg-css-text;
 		}
 	}
+}
+
+// Animated GIF player (MainMenuHandler.createGifPlayer): fills its parent and clips the frame strip to one frame
+.gifplayer {
+	width: 100%;
+	height: 100%;
+	overflow: clip;
+}
+
+.gifplayer__strip {
+	width: 100%;
 }

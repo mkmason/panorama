@@ -4,17 +4,21 @@
 	</styles>
 
 	<!-- CS:S-style "Quit game" dialog, shown instead of the generic quit popup when the CS:S main menu is active
-	     (MainMenuHandler.onQuitPrompt). -->
-	<Panel class="PopupPanel Hidden css-quit" defaultfocus="CssQuitConfirm" popupbackground="dim">
-		<Label class="css-quit__title" text="QUIT GAME" />
-		<Label class="css-quit__message" text="Do you wish to stop playing now?" />
-		<Panel class="css-quit__buttons">
-			<Button id="CssQuitConfirm" class="css-quit__btn" onactivate="GameInterfaceAPI.ConsoleCommand('quit');">
-				<Label class="css-quit__btn-text" text="Quit game" />
-			</Button>
-			<Button class="css-quit__btn" onactivate="UiToolkitAPI.CloseAllVisiblePopups();">
-				<Label class="css-quit__btn-text" text="Cancel" />
-			</Button>
+	     (MainMenuHandler.onQuitPrompt). The popup root covers the screen: a transparent backdrop button closes it
+	     when clicking outside the dialog box, like the CS:S menu windows. -->
+	<PopupCustomLayout class="PopupPanel Hidden css-quit-root" defaultfocus="CssQuitConfirm" popupbackground="dim">
+		<Button class="css-quit-root__backdrop" onactivate="UiToolkitAPI.CloseAllVisiblePopups();" />
+		<Panel class="css-quit" hittest="true" onactivate="">
+			<Label class="css-quit__title" text="QUIT GAME" />
+			<Label class="css-quit__message" text="Do you wish to stop playing now?" />
+			<Panel class="css-quit__buttons">
+				<Button id="CssQuitConfirm" class="css-quit__btn" onactivate="GameInterfaceAPI.ConsoleCommand('quit');">
+					<Label class="css-quit__btn-text" text="Quit game" />
+				</Button>
+				<Button class="css-quit__btn" onactivate="UiToolkitAPI.CloseAllVisiblePopups();">
+					<Label class="css-quit__btn-text" text="Cancel" />
+				</Button>
+			</Panel>
 		</Panel>
-	</Panel>
+	</PopupCustomLayout>
 </root>
